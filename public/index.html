@@ -316,7 +316,7 @@ function updateChannelCount(zi) {
 }
 
 // ============================================================
-// Save Zone to DB
+// Save Zone to DB (รวมกับอันก่อนหน้าถ้ามี)
 // ============================================================
 async function saveZoneToDB(zi) {
     const z = zones[zi];
@@ -325,22 +325,33 @@ async function saveZoneToDB(zi) {
     const userName = document.getElementById('userName').value;
     if (!seatId) { alert('Enter Seat ID'); return; }
 
-    const body = {
-        seat_id: seatId,
-        area: z.area.toUpperCase(),
-        zone_data: {
-            area: z.area.toUpperCase(), isHorizontal: z.isHorizontal, row: z.row, column: z.column,
-            burnId: z.burnId, channelCount: z.channelCount, channels: z.channels, items: z.items,
-            seatCount: z.seatCount, model: z.model || null
-        },
-        created_by: userName
+    let zoneData = {
+        area: z.area.toUpperCase(), isHorizontal: z.isHorizontal, row: z.row, column: z.column,
+        burnId: z.burnId, channelCount: z.channelCount, channels: z.channels, items: [...(z.items||[])],
+        seatCount: z.seatCount, model: z.model || null
     };
 
     try {
+        const listRes = await fetch('/api/zones?seat_id='+seatId);
+        const existingZones = await listRes.json();
+        const existing = existingZones.find(x => x.area.toUpperCase() === z.area.toUpperCase());
+        if (existing && existing.zone_data && existing.zone_data.items && existing.zone_data.items.length > 0) {
+            const oldItems = existing.zone_data.items || [];
+            const newItems = z.items || [];
+            const byKey = {};
+            oldItems.forEach(it => { byKey[it.name || ('idx'+it.idIndex)] = { ...it }; });
+            newItems.forEach(it => { byKey[it.name || ('idx'+it.idIndex)] = { ...it }; });
+            zoneData.items = Object.values(byKey).sort((a,b) => (a.idIndex||0) - (b.idIndex||0));
+            zoneData.row = Math.max(existing.zone_data.row||0, z.row||0);
+            zoneData.column = Math.max(existing.zone_data.column||0, z.column||0);
+            zoneData.seatCount = zoneData.items.filter(i => !i.ignore).length;
+        }
+
+        const body = { seat_id: seatId, area: z.area.toUpperCase(), zone_data: zoneData, created_by: userName };
         const res = await fetch('/api/zones', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
         const data = await res.json();
         if (res.ok) {
-            addLog('success', `Zone ${z.area} saved to DB (id: ${data.id})`);
+            addLog('success', `Zone ${z.area} saved to DB (id: ${data.id})${existing ? ' - รวมกับอันก่อนหน้า' : ''}`);
             refreshDB();
         } else {
             addLog('error', `Save error: ${data.error}`);

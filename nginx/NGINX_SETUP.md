@@ -62,15 +62,24 @@ sudo systemctl reload nginx
 
 ## ขั้นตอนที่ 6: ติดตั้ง SSL (HTTPS)
 
+**ถ้าใช้ config ที่มี HTTPS อยู่แล้ว** ต้องมี SSL cert ก่อน:
+
 ```bash
 # ติดตั้ง certbot
 sudo apt install certbot python3-certbot-nginx -y
 
-# ขอ SSL certificate (ต้องชี้ DNS มาที่ VPS ก่อน)
+# ขอ SSL certificate (ต้องชี้ DNS มาที่ VPS ก่อน และ HTTP ต้องทำงานได้)
 sudo certbot --nginx -d bkp.devza.autos
 ```
 
-Certbot จะแก้ไข nginx config ให้ใช้ HTTPS อัตโนมัติ
+**ถ้า nginx error ว่าไม่พบ cert:** ใช้ config แบบ HTTP ก่อน แล้วรัน certbot:
+
+```bash
+# แก้ไข config ชั่วคราว - comment บล็อก HTTPS ออก ใช้แค่ HTTP
+# จากนั้น: sudo nginx -t && sudo systemctl reload nginx
+# รัน certbot: sudo certbot --nginx -d bkp.devza.autos
+# Certbot จะเพิ่ม SSL ให้ จากนั้นค่อยใช้ config เต็ม (ที่มี HTTPS)
+```
 
 ---
 
