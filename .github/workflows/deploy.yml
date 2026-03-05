@@ -1,0 +1,49 @@
+name: Deploy to VPS (Ubuntu)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # อนุญาตให้ deploy แบบ manual ได้
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          envs: ENV_FILE
+          script: |
+            set -e
+            APP_PATH="${{ secrets.VPS_APP_PATH }}"
+            [ -z "$APP_PATH" ] && APP_PATH="$HOME/seat-collab"
+            cd "$APP_PATH"
+            
+            echo ">>> Pulling latest code..."
+            git fetch origin
+            git reset --hard origin/main
+            
+            echo ">>> Writing .env..."
+            echo "$ENV_FILE" | base64 -d > .env
+            
+            echo ">>> Installing dependencies..."
+            npm ci --omit=dev
+            
+            echo ">>> Ensuring PM2 is installed..."
+            command -v pm2 &> /dev/null || sudo npm install -g pm2
+            
+            echo ">>> Restarting with PM2..."
+            pm2 restart seat-collab 2>/dev/null || pm2 start server.js --name seat-collab
+            pm2 save
+            
+            echo ">>> Deploy completed successfully!"
