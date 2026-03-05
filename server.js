@@ -67,6 +67,19 @@ app.delete('/api/zones/:id', async (req, res) => {
     }
 });
 
+// PUT /api/zones/reorder - Update tabOrder for all zones
+app.put('/api/zones/reorder', async (req, res) => {
+    try {
+        const { seat_id, orders } = req.body;
+        if (!seat_id || !orders) return res.status(400).json({ error: 'seat_id and orders required' });
+        await db.updateZoneOrders(seat_id, orders);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[PUT /api/zones/reorder]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // POST /api/publish - Combine ALL zones and POST to real API
 app.post('/api/publish', async (req, res) => {
     try {
@@ -78,7 +91,9 @@ app.post('/api/publish', async (req, res) => {
             return res.status(400).json({ error: 'No zones found for this seat_id' });
         }
 
-        // Build zoning array from ALL zones
+        allZones.sort((a, b) => (a.zone_data.tabOrder ?? 999) - (b.zone_data.tabOrder ?? 999));
+
+        // Build zoning array from ALL zones (sorted by tab order)
         const zoning = allZones.map((row, idx) => {
             const zd = row.zone_data;
             return {

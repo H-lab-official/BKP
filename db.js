@@ -57,10 +57,10 @@ async function initDB() {
     }
 }
 
-// Get all zones for a seat_id
+// Get all zones for a seat_id (sorted by tabOrder, then area)
 async function getZones(seatId) {
     const res = await pool.query(
-        'SELECT * FROM seat_zones WHERE seat_id = $1 ORDER BY area ASC',
+        "SELECT * FROM seat_zones WHERE seat_id = $1 ORDER BY COALESCE((zone_data->>'tabOrder')::int, 999) ASC, area ASC",
         [seatId]
     );
     return res.rows;
@@ -134,4 +134,16 @@ async function markAllPublished(seatId) {
     );
 }
 
-module.exports = { pool, initDB, getZones, saveZone, updateStatus, deleteZone, getReadyZones, markPublished, markAllPublished };
+// Update tabOrder in zone_data for all zones of a seat_id
+async function updateZoneOrders(seatId, orders) {
+    for (const { area, tabOrder } of orders) {
+        await pool.query(
+            `UPDATE seat_zones
+             SET zone_data = jsonb_set(zone_data, '{tabOrder}', $1::jsonb), updated_at = NOW()
+             WHERE seat_id = $2 AND area = $3`,
+            [JSON.stringify(tabOrder), seatId, area.toUpperCase()]
+        );
+    }
+}
+
+module.exports = { pool, initDB, getZones, saveZone, updateStatus, deleteZone, getReadyZones, markPublished, markAllPublished, updateZoneOrders };

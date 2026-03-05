@@ -30,6 +30,9 @@
         .tab{padding:8px 18px;background:#0f3460;border:1px solid #1a1a4e;border-radius:8px 8px 0 0;cursor:pointer;color:#9ca3af;font-weight:500;transition:all .2s}
         .tab.active{background:#16213e;color:#FFD700;border-bottom-color:#16213e;border-top:2px solid #FFD700}
         .tab:hover:not(.active){color:#e0e0e0;background:#1a2744}
+        .tab[draggable]{cursor:grab}
+        .tab[draggable]:active{cursor:grabbing}
+        .tab-drag-over{border:2px dashed #FFD700!important;background:#1a2744!important}
         .zone-panel{display:none}.zone-panel.active{display:block}
         .seat-grid{display:block;width:100%;margin:12px 0;max-height:50vh;overflow:auto;padding:8px;background:#0d1b36;border-radius:8px}
         .seat-row{display:flex;gap:3px;margin-bottom:3px;width:100%}
@@ -383,7 +386,7 @@ async function saveZoneToDB(zi) {
     let zoneData = {
         area: z.area.toUpperCase(), assignAlignment: z.assignAlignment||'ltr', alignment: z.assignAlignment||'ltr', rowFormat: z.rowFormat||'tb_asc', colFormat: z.colFormat||'lr_asc', ignoreMode: z.ignoreMode||'skip', isHorizontal: ['ltr','rtl','ltr_bt','rtl_bt'].includes(z.assignAlignment||'ltr'), row: z.row, column: z.column,
         burnId: z.burnId, channelCount: z.channelCount, channels: z.channels, items: [...(z.items||[])],
-        seatCount: z.seatCount, model: z.model || null
+        seatCount: z.seatCount, model: z.model || null, tabOrder: zi
     };
 
     try {
@@ -597,12 +600,49 @@ function updateTotals() {
 // ============================================================
 function renderAll() { renderTabs(); renderZonePanels(); updateTotals(); }
 
+let _dragTabIdx = -1;
 function renderTabs() {
     const c = document.getElementById('zoneTabs');
     let h='';
-    zones.forEach((z,i)=>{ h+=`<div class="tab ${i===activeTab?'active':''}" onclick="switchTab(${i})">${z.area||'Zone '+(i+1)}</div>`; });
+    zones.forEach((z,i)=>{
+        h+=`<div class="tab ${i===activeTab?'active':''}" draggable="true"
+            ondragstart="onTabDragStart(event,${i})" ondragover="onTabDragOver(event,${i})"
+            ondragenter="onTabDragEnter(event)" ondragleave="onTabDragLeave(event)"
+            ondrop="onTabDrop(event,${i})" ondragend="onTabDragEnd(event)"
+            onclick="switchTab(${i})">${z.area||'Zone '+(i+1)}</div>`;
+    });
     h+=`<button class="btn btn-outline btn-sm" onclick="addZone()" style="margin-left:8px">+ Add Zone</button>`;
     c.innerHTML = h;
+}
+function onTabDragStart(e,i) { _dragTabIdx=i; e.dataTransfer.effectAllowed='move'; e.target.style.opacity='0.4'; }
+function onTabDragOver(e,i) { e.preventDefault(); e.dataTransfer.dropEffect='move'; }
+function onTabDragEnter(e) { e.target.classList.add('tab-drag-over'); }
+function onTabDragLeave(e) { e.target.classList.remove('tab-drag-over'); }
+function onTabDragEnd(e) { e.target.style.opacity='1'; document.querySelectorAll('.tab-drag-over').forEach(el=>el.classList.remove('tab-drag-over')); }
+function onTabDrop(e,targetIdx) {
+    e.preventDefault(); e.target.classList.remove('tab-drag-over');
+    if (_dragTabIdx<0||_dragTabIdx===targetIdx) return;
+    const moved = zones.splice(_dragTabIdx,1)[0];
+    zones.splice(targetIdx,0,moved);
+    activeTab = targetIdx;
+    _dragTabIdx = -1;
+    zones.forEach((z,i) => { z.tabOrder = i; });
+    renderAll();
+    addLog('info', `Reordered zones: ${zones.map(z=>z.area||'?').join(' → ')}`);
+    saveZoneOrder();
+}
+async function saveZoneOrder() {
+    const seatId = document.getElementById('seatId').value;
+    if (!seatId) return;
+    const orders = zones.filter(z=>z.area).map((z,i) => ({ area: z.area, tabOrder: i }));
+    if (orders.length === 0) return;
+    try {
+        await fetch('/api/zones/reorder', {
+            method:'PUT', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ seat_id: seatId, orders })
+        });
+        addLog('success', 'Zone order saved to DB');
+    } catch(e) { addLog('error', 'Failed to save zone order: '+e.message); }
 }
 
 function renderZonePanels() {
