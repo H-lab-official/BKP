@@ -27,6 +27,13 @@ jobs:
             set -e
             APP_PATH="${{ secrets.VPS_APP_PATH }}"
             [ -z "$APP_PATH" ] && APP_PATH="$HOME/seat-collab"
+            REPO_URL="https://github.com/${{ github.repository }}.git"
+            
+            if [ ! -d "$APP_PATH" ]; then
+              echo ">>> Directory not found. Cloning repo..."
+              mkdir -p "$(dirname "$APP_PATH")"
+              git clone "$REPO_URL" "$APP_PATH"
+            fi
             cd "$APP_PATH"
             
             echo ">>> Pulling latest code..."
