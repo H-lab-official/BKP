@@ -56,19 +56,19 @@ cat deploy_key
 | `VPS_SSH_KEY` | เนื้อหา private key ทั้งหมด |
 | `VPS_SSH_PORT` | (optional) พอร์ต SSH ค่าเริ่มต้น 22 |
 | `VPS_APP_PATH` | (optional) path โฟลเดอร์ app เช่น `/home/ubuntu/seat-collab` |
-| `ENV_FILE` | เนื้อหา .env ทั้งหมด (base64 encoded) |
+| `ENV_FILE` | เนื้อหา .env ทั้งหมด |
 
-### สร้าง ENV_FILE (base64)
+### สร้าง ENV_FILE
 
+**วิธีที่ 1 (แนะนำ):** คัดลอกเนื้อหาไฟล์ `.env` ทั้งหมดไปวางใน GitHub Secret `ENV_FILE`
+
+**วิธีที่ 2 (base64):** ถ้าต้องการ encode ก่อน
 ```bash
 # Linux
 base64 -w0 .env
-
 # Mac
 base64 -i .env | tr -d '\n'
 ```
-
-คัดลอกผลลัพธ์ไปวางใน GitHub Secret `ENV_FILE`
 
 ---
 

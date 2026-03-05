@@ -41,7 +41,12 @@ jobs:
             git reset --hard origin/main
             
             echo ">>> Writing .env..."
-            echo "$ENV_FILE" | base64 -d > .env
+            if echo "$ENV_FILE" | base64 -d > .env 2>/dev/null; then
+              echo ">>> .env written (base64)"
+            else
+              printf '%s' "$ENV_FILE" > .env
+              echo ">>> .env written (plain text)"
+            fi
             
             echo ">>> Installing dependencies..."
             npm ci --omit=dev
