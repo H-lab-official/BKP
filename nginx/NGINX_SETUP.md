@@ -8,7 +8,7 @@ sudo apt install nginx -y
 sudo systemctl enable nginx
 sudo systemctl start nginx
 ```
-
+sssss
 ---
 
 ## ขั้นตอนที่ 2: คัดลอก Config
