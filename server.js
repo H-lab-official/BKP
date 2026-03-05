@@ -67,20 +67,19 @@ app.delete('/api/zones/:id', async (req, res) => {
     }
 });
 
-// POST /api/publish - Combine all ready zones and POST to real API
+// POST /api/publish - Combine ALL zones and POST to real API
 app.post('/api/publish', async (req, res) => {
     try {
         const { seat_id, name, maxChannel, brunCount, model } = req.body;
         if (!seat_id) return res.status(400).json({ error: 'seat_id required' });
 
-        // Get all ready zones
-        const readyZones = await db.getReadyZones(seat_id);
-        if (readyZones.length === 0) {
-            return res.status(400).json({ error: 'No zones with status "ready" found' });
+        const allZones = await db.getZones(seat_id);
+        if (allZones.length === 0) {
+            return res.status(400).json({ error: 'No zones found for this seat_id' });
         }
 
-        // Build zoning array
-        const zoning = readyZones.map((row, idx) => {
+        // Build zoning array from ALL zones
+        const zoning = allZones.map((row, idx) => {
             const zd = row.zone_data;
             return {
                 ...(zd.model ? { model: zd.model } : {}),
@@ -123,7 +122,10 @@ app.post('/api/publish', async (req, res) => {
             maxChannel: parseInt(maxChannel) || 2
         };
 
-        console.log(`[PUBLISH] Sending ${zoning.length} zones, ${totalSeats} seats to ${API_BASE}/seat/save`);
+        const modifiedAreas = allZones.filter(z => z.status !== 'posted').map(z => z.area);
+        const unchangedAreas = allZones.filter(z => z.status === 'posted').map(z => z.area);
+
+        console.log(`[PUBLISH] Sending ${zoning.length} zones (${modifiedAreas.length} modified, ${unchangedAreas.length} unchanged), ${totalSeats} seats to ${API_BASE}/seat/save`);
 
         // POST to real API
         const apiRes = await fetch(API_BASE + '/seat/save', {
@@ -138,8 +140,7 @@ app.post('/api/publish', async (req, res) => {
         const apiData = await apiRes.json();
 
         if (apiRes.ok) {
-            // Mark all as posted
-            await db.markPublished(seat_id);
+            await db.markAllPublished(seat_id);
             console.log('[PUBLISH] Success:', apiData);
         }
 
@@ -147,7 +148,9 @@ app.post('/api/publish', async (req, res) => {
             success: apiRes.ok,
             apiStatus: apiRes.status,
             apiResponse: apiData,
-            sentBody: requestBody
+            sentBody: requestBody,
+            modifiedAreas,
+            unchangedAreas
         });
     } catch (err) {
         console.error('[POST /api/publish]', err.message);

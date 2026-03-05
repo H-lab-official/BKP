@@ -75,10 +75,9 @@ async function saveZone(seatId, area, zoneData, createdBy) {
     );
 
     if (existing.rows.length > 0) {
-        // Update
         const res = await pool.query(
             `UPDATE seat_zones
-             SET zone_data = $1, created_by = $2, updated_at = NOW()
+             SET zone_data = $1, created_by = $2, status = 'draft', updated_at = NOW()
              WHERE seat_id = $3 AND area = $4
              RETURNING *`,
             [JSON.stringify(zoneData), createdBy, seatId, area.toUpperCase()]
@@ -127,4 +126,12 @@ async function markPublished(seatId) {
     );
 }
 
-module.exports = { pool, initDB, getZones, saveZone, updateStatus, deleteZone, getReadyZones, markPublished };
+// Mark ALL zones as posted (used after publishing all zones)
+async function markAllPublished(seatId) {
+    await pool.query(
+        "UPDATE seat_zones SET status = 'posted', updated_at = NOW() WHERE seat_id = $1",
+        [seatId]
+    );
+}
+
+module.exports = { pool, initDB, getZones, saveZone, updateStatus, deleteZone, getReadyZones, markPublished, markAllPublished };
