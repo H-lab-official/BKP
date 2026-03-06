@@ -187,7 +187,7 @@ let dbZones = [];
 // ============================================================
 function addZone(data) {
     const zone = data || {
-        area: '', assignAlignment: 'ltr', alignment: 'ltr', rowFormat: 'tb_asc', colFormat: 'lr_asc', ignoreMode: 'skip', isHorizontal: true, row: 0, column: 0, burnId: 0,
+        area: '', assignAlignment: 'ltr', alignment: 'ltr', rowFormat: 'tb_asc', colFormat: 'lr_asc', rowStart: 'A', colStart: '1', ignoreMode: 'skip', isHorizontal: true, row: 0, column: 0, burnId: 0,
         channelCount: 1, channels: [{ name: zones.length + 1, min: 1, max: 170 }],
         items: [], seatCount: 0, showId: false
     };
@@ -215,35 +215,44 @@ function numToLetter(n) {
     while (n > 0) { n--; s = String.fromCharCode(65 + n % 26) + s; n = Math.floor(n / 26); }
     return s || 'A';
 }
-function getRowLetter(r, c, rows, cols, dir) {
-    if (dir === 'tb_asc')  return numToLetter(r+1);
-    if (dir === 'tb_desc') return numToLetter(rows-r);
-    if (dir === 'lr_asc')  return numToLetter(c+1);
-    if (dir === 'lr_desc') return numToLetter(cols-c);
-    return numToLetter(r+1);
+function letterToNum(s) {
+    if (!s) return 0;
+    s = s.toUpperCase().replace(/[^A-Z]/g, '');
+    let n = 0;
+    for (let i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64);
+    return n;
 }
-function getColNumber(r, c, rows, cols, dir) {
-    if (dir === 'lr_asc')  return String(c+1);
-    if (dir === 'lr_desc') return String(cols-c);
-    if (dir === 'tb_asc')  return String(r+1);
-    if (dir === 'tb_desc') return String(rows-r);
-    return String(c+1);
+function getRowLetter(r, c, rows, cols, dir, offset) {
+    if (dir === 'tb_asc')  return numToLetter(r + offset);
+    if (dir === 'tb_desc') return numToLetter(rows - 1 - r + offset);
+    if (dir === 'lr_asc')  return numToLetter(c + offset);
+    if (dir === 'lr_desc') return numToLetter(cols - 1 - c + offset);
+    return numToLetter(r + offset);
+}
+function getColNumber(r, c, rows, cols, dir, offset) {
+    if (dir === 'lr_asc')  return String(c + offset);
+    if (dir === 'lr_desc') return String(cols - 1 - c + offset);
+    if (dir === 'tb_asc')  return String(r + offset);
+    if (dir === 'tb_desc') return String(rows - 1 - r + offset);
+    return String(c + offset);
 }
 function generateItems(zi) {
     const z = zones[zi];
     z.row = parseInt(z.row) || 0; z.column = parseInt(z.column) || 0;
     if (z.row <= 0 || z.column <= 0) { alert('Row and Column must be > 0'); return; }
     const rowDir = z.rowFormat || 'tb_asc', colDir = z.colFormat || 'lr_asc';
+    const rowOff = letterToNum(z.rowStart || 'A') || 1;
+    const colOff = parseInt(z.colStart) || 1;
     z.items = [];
     for (let r = 0; r < z.row; r++)
         for (let c = 0; c < z.column; c++) {
-            const rl = getRowLetter(r, c, z.row, z.column, rowDir);
-            const cl = getColNumber(r, c, z.row, z.column, colDir);
+            const rl = getRowLetter(r, c, z.row, z.column, rowDir, rowOff);
+            const cl = getColNumber(r, c, z.row, z.column, colDir, colOff);
             z.items.push({ name: z.area+','+rl+','+cl, pixelId:0, channel:0, ignore:false, idIndex: r*z.column+c });
         }
     z.seatCount = z.items.filter(i=>!i.ignore).length;
     updateTotals(); renderAll();
-    addLog('info', `Zone ${z.area}: Generated ${z.items.length} items (${z.row}x${z.column})`);
+    addLog('info', `Zone ${z.area}: Generated ${z.items.length} items (${z.row}x${z.column}) row:${z.rowStart||'A'} col:${z.colStart||'1'}`);
 }
 
 // ============================================================
@@ -285,6 +294,36 @@ function assignChannels(zi) {
     renderAll(); addLog('info', `Zone ${z.area}: Assigned channels for ${count} seats`);
 }
 
+// ============================================================
+// Recalc Names (เลื่อนชื่อเมื่อปิดที่นั่ง - ใช้ ignoreMode เหมือน Assign Channels)
+// ============================================================
+function recalcNames(zi) {
+    const z = zones[zi];
+    if (!z.items || !z.row || !z.column) return;
+    const mode = z.ignoreMode || 'skip';
+    if (mode === 'reserve') return; // ไม่เลื่อนลำดับ - เก็บชื่อเดิม
+
+    const rowDir = z.rowFormat || 'tb_asc';
+    const rowOff = letterToNum(z.rowStart || 'A') || 1;
+    const colOff = parseInt(z.colStart) || 1;
+
+    for (let r = 0; r < z.row; r++) {
+        let seq = 0;
+        for (let c = 0; c < z.column; c++) {
+            const idx = r * z.column + c;
+            const it = z.items[idx];
+            if (!it) continue;
+            const rl = getRowLetter(r, c, z.row, z.column, rowDir, rowOff);
+            if (it.ignore) {
+                it.name = z.area + ',' + rl + ',-';
+            } else {
+                seq++;
+                it.name = z.area + ',' + rl + ',' + (colOff + seq - 1);
+            }
+        }
+    }
+}
+
 let editMode = false;
 
 function toggleEditMode() {
@@ -305,6 +344,7 @@ function handleSeatClick(zi, idx, e) {
         const z = zones[zi];
         z.items[idx].ignore = !z.items[idx].ignore;
         z.seatCount = z.items.filter(i => !i.ignore).length;
+        recalcNames(zi);
         updateTotals();
         renderAll();
     }
@@ -360,26 +400,38 @@ function saveInlineEditSilent(zi) {
     const it = z.items[editState.idx];
     const nameEl = document.getElementById('ie_name_' + zi);
     if (!nameEl) return;
+    const oldIgnore = it.ignore;
     it.name = nameEl.value.trim() || it.name;
     it.channel = parseInt(document.getElementById('ie_ch_' + zi).value) || 0;
     it.pixelId = parseInt(document.getElementById('ie_px_' + zi).value) || 0;
     it.ignore = document.getElementById('ie_ig_' + zi).checked;
     z.seatCount = z.items.filter(i => !i.ignore).length;
-    // Update the cell text in DOM directly
-    const cells = document.querySelectorAll(`#zp${zi} .seat-cell`);
-    if (cells[editState.idx]) {
-        const d = z.showId ? it.channel + ',' + it.pixelId : it.name;
-        cells[editState.idx].textContent = d;
-        cells[editState.idx].className = 'seat-cell ' + (it.ignore ? 'ignored' : 'normal');
+    if (it.ignore !== oldIgnore) {
+        recalcNames(zi);
     }
     updateTotals();
 }
 
 function saveInlineEdit(zi) {
     saveInlineEditSilent(zi);
+    recalcNames(zi);
+    renderAll();
     if (editState.zi >= 0) {
         const it = zones[zi].items[editState.idx];
         addLog('info', `แก้ไข item: ${it.name}`);
+        requestAnimationFrame(() => {
+            const panel = document.getElementById('inlineEdit' + zi);
+            if (panel) panel.classList.add('active');
+            const nameEl = document.getElementById('ie_name_' + zi);
+            if (nameEl) {
+                nameEl.value = it.name;
+                document.getElementById('ie_ch_' + zi).value = it.channel;
+                document.getElementById('ie_px_' + zi).value = it.pixelId;
+                document.getElementById('ie_ig_' + zi).checked = it.ignore;
+            }
+            const cells = document.querySelectorAll(`#zp${zi} .seat-cell`);
+            if (cells[editState.idx]) cells[editState.idx].classList.add('editing');
+        });
     }
 }
 
@@ -412,7 +464,7 @@ async function saveZoneToDB(zi) {
     if (!seatId) { alert('Enter Seat ID'); return; }
 
     let zoneData = {
-        area: z.area.toUpperCase(), assignAlignment: z.assignAlignment||'ltr', alignment: z.assignAlignment||'ltr', rowFormat: z.rowFormat||'tb_asc', colFormat: z.colFormat||'lr_asc', ignoreMode: z.ignoreMode||'skip', isHorizontal: ['ltr','rtl','ltr_bt','rtl_bt'].includes(z.assignAlignment||'ltr'), row: z.row, column: z.column,
+        area: z.area.toUpperCase(), assignAlignment: z.assignAlignment||'ltr', alignment: z.assignAlignment||'ltr', rowFormat: z.rowFormat||'tb_asc', colFormat: z.colFormat||'lr_asc', rowStart: z.rowStart||'A', colStart: z.colStart||'1', ignoreMode: z.ignoreMode||'skip', isHorizontal: ['ltr','rtl','ltr_bt','rtl_bt'].includes(z.assignAlignment||'ltr'), row: z.row, column: z.column,
         burnId: z.burnId, channelCount: z.channelCount, channels: z.channels, items: [...(z.items||[])],
         seatCount: z.seatCount, model: z.model || null, tabOrder: zi
     };
@@ -484,6 +536,8 @@ function loadZoneToEditor(dbZone) {
     if (!zd.alignment) zd.alignment = zd.assignAlignment || 'ltr';
     if (!zd.rowFormat || !['tb_asc','tb_desc','lr_asc','lr_desc'].includes(zd.rowFormat)) zd.rowFormat = 'tb_asc';
     if (!zd.colFormat || !['lr_asc','lr_desc','tb_asc','tb_desc'].includes(zd.colFormat)) zd.colFormat = 'lr_asc';
+    if (!zd.rowStart) zd.rowStart = 'A';
+    if (!zd.colStart) zd.colStart = '1';
     if (!zd.ignoreMode || !['skip','reserve'].includes(zd.ignoreMode)) zd.ignoreMode = 'skip';
     // Check if already in editor
     const existing = zones.findIndex(z => z.area && z.area.toUpperCase() === dbZone.area.toUpperCase());
@@ -525,6 +579,8 @@ async function loadFromAPI() {
                 if (!z.alignment) z.alignment = z.assignAlignment || 'ltr';
                 if (!z.rowFormat || !['tb_asc','tb_desc','lr_asc','lr_desc'].includes(z.rowFormat)) z.rowFormat = 'tb_asc';
                 if (!z.colFormat || !['lr_asc','lr_desc','tb_asc','tb_desc'].includes(z.colFormat)) z.colFormat = 'lr_asc';
+                if (!z.rowStart) z.rowStart = 'A';
+                if (!z.colStart) z.colStart = '1';
                 if (!z.ignoreMode || !['skip','reserve'].includes(z.ignoreMode)) z.ignoreMode = 'skip';
                 zones.push(z);
             });
@@ -689,11 +745,13 @@ function renderZonePanels() {
                     <option value="tb_desc" ${(z.rowFormat||'')==='tb_desc'?'selected':''}>C→B→A (ล่าง→บน)</option>
                     <option value="lr_asc" ${(z.rowFormat||'')==='lr_asc'?'selected':''}>A→B→C (ซ้าย→ขวา)</option>
                     <option value="lr_desc" ${(z.rowFormat||'')==='lr_desc'?'selected':''}>C→B→A (ขวา→ซ้าย)</option></select></div>
+                <div class="form-group"><label>Row เริ่ม</label><input type="text" value="${z.rowStart||'A'}" style="width:60px" onchange="zones[${i}].rowStart=this.value.toUpperCase()" placeholder="A"></div>
                 <div class="form-group"><label>Col (1,2,3..)</label><select onchange="zones[${i}].colFormat=this.value">
                     <option value="lr_asc" ${(z.colFormat||'lr_asc')==='lr_asc'?'selected':''}>1→2→3 (ซ้าย→ขวา)</option>
                     <option value="lr_desc" ${(z.colFormat||'')==='lr_desc'?'selected':''}>3→2→1 (ขวา→ซ้าย)</option>
                     <option value="tb_asc" ${(z.colFormat||'')==='tb_asc'?'selected':''}>1→2→3 (บน→ล่าง)</option>
                     <option value="tb_desc" ${(z.colFormat||'')==='tb_desc'?'selected':''}>3→2→1 (ล่าง→บน)</option></select></div>
+                <div class="form-group"><label>Col เริ่ม</label><input type="number" value="${z.colStart||1}" min="0" style="width:60px" onchange="zones[${i}].colStart=parseInt(this.value)"></div>
                 <button class="btn btn-gold" onclick="generateItems(${i})">Generate Items</button>
             </div></div>`;
         h+=`<div class="group-box">
