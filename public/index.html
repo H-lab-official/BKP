@@ -79,33 +79,20 @@
         .db-table tr:hover{background:rgba(255,215,0,.03)}
         .db-table .actions{display:flex;gap:4px;flex-wrap:wrap}
         .empty-state{text-align:center;padding:40px;color:#6b7280;font-style:italic}
+        .inline-edit{background:#1a2744;border:2px solid #FFD700;border-radius:8px;padding:12px 16px;margin:8px 0;display:none;gap:12px;align-items:flex-end;flex-wrap:wrap}
+        .inline-edit.active{display:flex}
+        .inline-edit .form-group{margin:0}
+        .inline-edit .edit-label{color:#FFD700;font-size:.75rem;font-weight:600;margin-bottom:2px}
+        .seat-cell.editing{outline:3px solid #FFD700;outline-offset:-1px;box-shadow:0 0 12px rgba(255,215,0,.5);transform:scale(1.1);z-index:2;position:relative}
+        .seat-grid.edit-mode .seat-cell{cursor:cell}
+        .seat-grid.edit-mode .seat-cell:hover{outline:2px dashed #FFD700;outline-offset:-1px}
         .card-zone-editor{width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);box-sizing:border-box}
         .group-box{background:#0f3460;border:1px solid #1a1a4e;border-radius:8px;padding:16px;margin-bottom:16px}
         .group-title{color:#FFD700;font-size:.95rem;font-weight:600;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #1a1a4e}
-        .edit-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center;padding:20px}
-        .edit-modal.visible{display:flex}
-        .edit-modal .modal-box{background:#16213e;border:1px solid #1a1a4e;border-radius:12px;padding:24px;min-width:320px;max-width:90vw}
-        .edit-modal .modal-title{color:#FFD700;margin-bottom:16px;font-size:1.1rem}
-        .edit-modal .form-group{margin-bottom:12px}
-        .edit-modal .modal-actions{display:flex;gap:8px;margin-top:20px;justify-content:flex-end}
         @media(max-width:768px){.form-row{flex-direction:column}input[type="text"],input.wide{width:100%}}
     </style>
 </head>
 <body>
-    <!-- Edit Item Modal -->
-    <div class="edit-modal" id="editModal" onclick="if(event.target===this)closeEditModal()">
-        <div class="modal-box" onclick="event.stopPropagation()">
-            <div class="modal-title">แก้ไข Seat</div>
-            <div class="form-group"><label>Name</label><input type="text" id="editName" class="wide" style="width:100%"></div>
-            <div class="form-group"><label>Controller</label><input type="number" id="editChannel" min="0" style="width:100px"></div>
-            <div class="form-group"><label>เลขที่นั่ง</label><input type="number" id="editPixelId" min="0" style="width:100px"></div>
-            <div class="form-group"><label><input type="checkbox" id="editIgnore"> Ignore (ไม่นับ)</label></div>
-            <div class="modal-actions">
-                <button class="btn btn-outline" onclick="closeEditModal()">ยกเลิก</button>
-                <button class="btn btn-gold" onclick="saveEditItem()">บันทึก</button>
-            </div>
-        </div>
-    </div>
     <h1>Seat Collab</h1>
 
     <!-- ===== Config Section ===== -->
@@ -298,28 +285,33 @@ function assignChannels(zi) {
     renderAll(); addLog('info', `Zone ${z.area}: Assigned channels for ${count} seats`);
 }
 
-let _clickTimeout = null;
-function handleSeatClick(zi,row,col,e) {
-    if (e.detail === 2) return; // double-click จะเปิด edit แทน
-    clearTimeout(_clickTimeout);
-    _clickTimeout = setTimeout(() => {
-        toggleIgnore(zi,row,col);
-        _clickTimeout = null;
-    }, 200);
+let editMode = false;
+
+function toggleEditMode() {
+    if (editMode && editState.zi >= 0) {
+        saveInlineEditSilent(editState.zi);
+    }
+    editMode = !editMode;
+    if (!editMode) {
+        cancelInlineEdit(activeTab);
+    }
+    renderAll();
 }
-function handleSeatDblClick(zi,idx) {
-    clearTimeout(_clickTimeout);
-    _clickTimeout = null;
-    editItem(zi, idx);
-}
-function toggleIgnore(zi,row,col) {
-    const z=zones[zi]; const idx=(row-1)*z.column+(col-1);
-    z.items[idx].ignore=!z.items[idx].ignore;
-    z.seatCount=z.items.filter(i=>!i.ignore).length; updateTotals(); renderAll();
+
+function handleSeatClick(zi, idx, e) {
+    if (editMode) {
+        editItem(zi, idx);
+    } else {
+        const z = zones[zi];
+        z.items[idx].ignore = !z.items[idx].ignore;
+        z.seatCount = z.items.filter(i => !i.ignore).length;
+        updateTotals();
+        renderAll();
+    }
 }
 
 // ============================================================
-// Edit Item (อันๆ ไป)
+// Edit Item (Inline)
 // ============================================================
 let editState = { zi: -1, idx: -1 };
 
@@ -327,32 +319,68 @@ function editItem(zi, itemIndex) {
     const z = zones[zi];
     if (!z.items || !z.items[itemIndex]) return;
     const it = z.items[itemIndex];
+
+    // Save current edit if switching to a different seat
+    if (editState.zi >= 0 && editState.idx >= 0 && (editState.zi !== zi || editState.idx !== itemIndex)) {
+        saveInlineEditSilent(editState.zi);
+    }
+
+    // Remove old highlight
+    document.querySelectorAll('.seat-cell.editing').forEach(el => el.classList.remove('editing'));
+
     editState = { zi, idx: itemIndex };
-    document.getElementById('editName').value = it.name || '';
-    document.getElementById('editChannel').value = it.channel || 0;
-    document.getElementById('editPixelId').value = it.pixelId || 0;
-    document.getElementById('editIgnore').checked = !!it.ignore;
-    document.getElementById('editModal').classList.add('visible');
+
+    // Highlight the new seat
+    const cells = document.querySelectorAll(`#zp${zi} .seat-cell`);
+    if (cells[itemIndex]) cells[itemIndex].classList.add('editing');
+
+    const nameEl = document.getElementById('ie_name_' + zi);
+    if (!nameEl) return;
+    nameEl.value = it.name || '';
+    document.getElementById('ie_ch_' + zi).value = it.channel || 0;
+    document.getElementById('ie_px_' + zi).value = it.pixelId || 0;
+    document.getElementById('ie_ig_' + zi).checked = !!it.ignore;
+    document.getElementById('ie_info_' + zi).textContent = `idIndex: ${it.idIndex} | row ${Math.floor(itemIndex / z.column) + 1}, col ${(itemIndex % z.column) + 1}`;
+    const panel = document.getElementById('inlineEdit' + zi);
+    if (panel) panel.classList.add('active');
+    nameEl.focus();
+    nameEl.select();
 }
 
-function closeEditModal() {
-    document.getElementById('editModal').classList.remove('visible');
+function cancelInlineEdit(zi) {
+    const panel = document.getElementById('inlineEdit' + zi);
+    if (panel) panel.classList.remove('active');
     editState = { zi: -1, idx: -1 };
+    document.querySelectorAll('.seat-cell.editing').forEach(el => el.classList.remove('editing'));
 }
 
-function saveEditItem() {
-    if (editState.zi < 0 || editState.idx < 0) return;
-    const z = zones[editState.zi];
+function saveInlineEditSilent(zi) {
+    if (editState.zi !== zi || editState.idx < 0) return;
+    const z = zones[zi];
     const it = z.items[editState.idx];
-    it.name = document.getElementById('editName').value.trim() || it.name;
-    it.channel = parseInt(document.getElementById('editChannel').value) || 0;
-    it.pixelId = parseInt(document.getElementById('editPixelId').value) || 0;
-    it.ignore = document.getElementById('editIgnore').checked;
+    const nameEl = document.getElementById('ie_name_' + zi);
+    if (!nameEl) return;
+    it.name = nameEl.value.trim() || it.name;
+    it.channel = parseInt(document.getElementById('ie_ch_' + zi).value) || 0;
+    it.pixelId = parseInt(document.getElementById('ie_px_' + zi).value) || 0;
+    it.ignore = document.getElementById('ie_ig_' + zi).checked;
     z.seatCount = z.items.filter(i => !i.ignore).length;
+    // Update the cell text in DOM directly
+    const cells = document.querySelectorAll(`#zp${zi} .seat-cell`);
+    if (cells[editState.idx]) {
+        const d = z.showId ? it.channel + ',' + it.pixelId : it.name;
+        cells[editState.idx].textContent = d;
+        cells[editState.idx].className = 'seat-cell ' + (it.ignore ? 'ignored' : 'normal');
+    }
     updateTotals();
-    renderAll();
-    closeEditModal();
-    addLog('info', `แก้ไข item: ${it.name}`);
+}
+
+function saveInlineEdit(zi) {
+    saveInlineEditSilent(zi);
+    if (editState.zi >= 0) {
+        const it = zones[zi].items[editState.idx];
+        addLog('info', `แก้ไข item: ${it.name}`);
+    }
 }
 
 function moveChannel(zi, ci, dir) {
@@ -708,17 +736,31 @@ function renderZonePanels() {
         h+=`<div class="form-row" style="margin-top:12px">
             <button class="btn btn-green" onclick="saveZoneToDB(${i})">Save to DB</button>
             <button class="btn btn-red btn-sm" onclick="removeZone(${i})">Delete</button></div>`;
-        h+=`<div class="display-toggle" style="margin-top:12px"><label>Show:</label><label style="color:#e0e0e0">Name</label>
+        h+=`<div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap">
+            <div class="display-toggle" style="margin:0"><label>Show:</label><label style="color:#e0e0e0">Name</label>
             <label class="toggle-switch"><input type="checkbox" ${z.showId?'checked':''} onchange="zones[${i}].showId=this.checked;renderAll()">
-            <span class="toggle-slider"></span></label><label style="color:#e0e0e0">Ch,Pixel</label></div>`;
+            <span class="toggle-slider"></span></label><label style="color:#e0e0e0">Ch,Pixel</label></div>
+            <button class="btn ${editMode?'btn-red':'btn-purple'} btn-sm" onclick="toggleEditMode()">${editMode?'ปิดแก้ไข':'แก้ไข'}</button>
+            ${editMode?'<span style="color:#FFD700;font-size:.8rem">Edit Mode: คลิกที่นั่งเพื่อแก้ไข</span>':''}
+        </div>`;
+        h+=`<div class="inline-edit" id="inlineEdit${i}">
+            <div class="form-group"><div class="edit-label">Name</div><input type="text" id="ie_name_${i}" style="width:140px"></div>
+            <div class="form-group"><div class="edit-label">Controller</div><input type="number" id="ie_ch_${i}" min="0" style="width:80px"></div>
+            <div class="form-group"><div class="edit-label">เลขที่นั่ง</div><input type="number" id="ie_px_${i}" min="0" style="width:80px"></div>
+            <div class="form-group" style="align-self:center"><label style="color:#e0e0e0;font-size:.85rem;cursor:pointer"><input type="checkbox" id="ie_ig_${i}"> Ignore</label></div>
+            <button class="btn btn-gold btn-sm" onclick="saveInlineEdit(${i})">Save</button>
+            <button class="btn btn-outline btn-sm" onclick="toggleEditMode()">ปิดแก้ไข</button>
+            <span id="ie_info_${i}" style="color:#9ca3af;font-size:.78rem;margin-left:4px"></span>
+        </div>`;
         if (z.items&&z.items.length>0&&z.row>0&&z.column>0) {
-            h+=`<div class="seat-grid">`;
+            h+=`<div class="seat-grid ${editMode?'edit-mode':''}">`;
             for(let r=0;r<z.row;r++){h+=`<div class="seat-row">`;
                 for(let c=0;c<z.column;c++){const it=z.items[r*z.column+c];if(it){
                     const cls=it.ignore?'ignored':'normal';
-                    const d=z.showId?it.channel+','+it.pixelId:it.name;
                     const idx=r*z.column+c;
-                    h+=`<div class="seat-cell ${cls}" onclick="handleSeatClick(${i},${r+1},${c+1},event)" ondblclick="handleSeatDblClick(${i},${idx})" title="คลิก: toggle ignore | Double-click: แก้ไข">${d}</div>`;
+                    const editing=(editState.zi===i&&editState.idx===idx)?'editing':'';
+                    const d=z.showId?it.channel+','+it.pixelId:it.name;
+                    h+=`<div class="seat-cell ${cls} ${editing}" onclick="handleSeatClick(${i},${idx},event)" title="${editMode?'คลิก: แก้ไข':'คลิก: toggle ignore'}">${d}</div>`;
                 }}h+=`</div>`;}
             h+=`</div>`;
         }
