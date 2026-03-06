@@ -187,7 +187,7 @@ let dbZones = [];
 // ============================================================
 function addZone(data) {
     const zone = data || {
-        area: '', assignAlignment: 'ltr', alignment: 'ltr', rowFormat: 'tb_asc', colFormat: 'lr_asc', rowStart: 'A', colStart: '1', ignoreMode: 'skip', isHorizontal: true, row: 0, column: 0, burnId: 0,
+        area: '', assignAlignment: 'ltr', alignment: 'ltr', rowFormat: 'tb_asc', colFormat: 'lr_asc', rowStart: 'A', colStart: '1', rowLetterMode: 'a', ignoreMode: 'skip', isHorizontal: true, row: 0, column: 0, burnId: 0,
         channelCount: 1, channels: [{ name: zones.length + 1, min: 1, max: 170 }],
         items: [], seatCount: 0, showId: false
     };
@@ -215,6 +215,14 @@ function numToLetter(n) {
     while (n > 0) { n--; s = String.fromCharCode(65 + n % 26) + s; n = Math.floor(n / 26); }
     return s || 'A';
 }
+function numToLetterWithMode(n, mode) {
+    n = parseInt(n) || 0;
+    if (mode === 'aa') {
+        if (n <= 1) return 'AA';
+        return numToLetter(n - 1);
+    }
+    return numToLetter(n);
+}
 function letterToNum(s) {
     if (!s) return 0;
     s = s.toUpperCase().replace(/[^A-Z]/g, '');
@@ -222,12 +230,13 @@ function letterToNum(s) {
     for (let i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64);
     return n;
 }
-function getRowLetter(r, c, rows, cols, dir, offset) {
-    if (dir === 'tb_asc')  return numToLetter(r + offset);
-    if (dir === 'tb_desc') return numToLetter(rows - 1 - r + offset);
-    if (dir === 'lr_asc')  return numToLetter(c + offset);
-    if (dir === 'lr_desc') return numToLetter(cols - 1 - c + offset);
-    return numToLetter(r + offset);
+function getRowLetter(r, c, rows, cols, dir, offset, mode) {
+    const letter = (n) => numToLetterWithMode(n, mode || 'a');
+    if (dir === 'tb_asc')  return letter(r + offset);
+    if (dir === 'tb_desc') return letter(rows - 1 - r + offset);
+    if (dir === 'lr_asc')  return letter(c + offset);
+    if (dir === 'lr_desc') return letter(cols - 1 - c + offset);
+    return letter(r + offset);
 }
 function getColNumber(r, c, rows, cols, dir, offset) {
     if (dir === 'lr_asc')  return String(c + offset);
@@ -241,12 +250,14 @@ function generateItems(zi) {
     z.row = parseInt(z.row) || 0; z.column = parseInt(z.column) || 0;
     if (z.row <= 0 || z.column <= 0) { alert('Row and Column must be > 0'); return; }
     const rowDir = z.rowFormat || 'tb_asc', colDir = z.colFormat || 'lr_asc';
-    const rowOff = letterToNum(z.rowStart || 'A') || 1;
+    const mode = z.rowLetterMode || 'a';
+    let rowOff = letterToNum(z.rowStart || 'A') || 1;
+    if (mode === 'aa' && (z.rowStart || '').toUpperCase() === 'AA') rowOff = 1;
     const colOff = parseInt(z.colStart) || 1;
     z.items = [];
     for (let r = 0; r < z.row; r++)
         for (let c = 0; c < z.column; c++) {
-            const rl = getRowLetter(r, c, z.row, z.column, rowDir, rowOff);
+            const rl = getRowLetter(r, c, z.row, z.column, rowDir, rowOff, mode);
             const cl = getColNumber(r, c, z.row, z.column, colDir, colOff);
             z.items.push({ name: z.area+','+rl+','+cl, pixelId:0, channel:0, ignore:false, idIndex: r*z.column+c });
         }
@@ -300,11 +311,13 @@ function assignChannels(zi) {
 function recalcNames(zi) {
     const z = zones[zi];
     if (!z.items || !z.row || !z.column) return;
-    const mode = z.ignoreMode || 'skip';
-    if (mode === 'reserve') return; // ไม่เลื่อนลำดับ - เก็บชื่อเดิม
+    const ignoreMode = z.ignoreMode || 'skip';
+    if (ignoreMode === 'reserve') return; // ไม่เลื่อนลำดับ - เก็บชื่อเดิม
 
     const rowDir = z.rowFormat || 'tb_asc';
-    const rowOff = letterToNum(z.rowStart || 'A') || 1;
+    const letterMode = z.rowLetterMode || 'a';
+    let rowOff = letterToNum(z.rowStart || 'A') || 1;
+    if (letterMode === 'aa' && (z.rowStart || '').toUpperCase() === 'AA') rowOff = 1;
     const colOff = parseInt(z.colStart) || 1;
 
     for (let r = 0; r < z.row; r++) {
@@ -313,7 +326,7 @@ function recalcNames(zi) {
             const idx = r * z.column + c;
             const it = z.items[idx];
             if (!it) continue;
-            const rl = getRowLetter(r, c, z.row, z.column, rowDir, rowOff);
+            const rl = getRowLetter(r, c, z.row, z.column, rowDir, rowOff, letterMode);
             if (it.ignore) {
                 it.name = z.area + ',' + rl + ',-';
             } else {
@@ -464,7 +477,7 @@ async function saveZoneToDB(zi) {
     if (!seatId) { alert('Enter Seat ID'); return; }
 
     let zoneData = {
-        area: z.area.toUpperCase(), assignAlignment: z.assignAlignment||'ltr', alignment: z.assignAlignment||'ltr', rowFormat: z.rowFormat||'tb_asc', colFormat: z.colFormat||'lr_asc', rowStart: z.rowStart||'A', colStart: z.colStart||'1', ignoreMode: z.ignoreMode||'skip', isHorizontal: ['ltr','rtl','ltr_bt','rtl_bt'].includes(z.assignAlignment||'ltr'), row: z.row, column: z.column,
+        area: z.area.toUpperCase(), assignAlignment: z.assignAlignment||'ltr', alignment: z.assignAlignment||'ltr', rowFormat: z.rowFormat||'tb_asc', colFormat: z.colFormat||'lr_asc', rowStart: z.rowStart||'A', colStart: z.colStart||'1', rowLetterMode: z.rowLetterMode||'a', ignoreMode: z.ignoreMode||'skip', isHorizontal: ['ltr','rtl','ltr_bt','rtl_bt'].includes(z.assignAlignment||'ltr'), row: z.row, column: z.column,
         burnId: z.burnId, channelCount: z.channelCount, channels: z.channels, items: [...(z.items||[])],
         seatCount: z.seatCount, model: z.model || null, tabOrder: zi
     };
@@ -538,6 +551,7 @@ function loadZoneToEditor(dbZone) {
     if (!zd.colFormat || !['lr_asc','lr_desc','tb_asc','tb_desc'].includes(zd.colFormat)) zd.colFormat = 'lr_asc';
     if (!zd.rowStart) zd.rowStart = 'A';
     if (!zd.colStart) zd.colStart = '1';
+    if (!zd.rowLetterMode || !['a','aa'].includes(zd.rowLetterMode)) zd.rowLetterMode = 'a';
     if (!zd.ignoreMode || !['skip','reserve'].includes(zd.ignoreMode)) zd.ignoreMode = 'skip';
     // Check if already in editor
     const existing = zones.findIndex(z => z.area && z.area.toUpperCase() === dbZone.area.toUpperCase());
@@ -581,6 +595,7 @@ async function loadFromAPI() {
                 if (!z.colFormat || !['lr_asc','lr_desc','tb_asc','tb_desc'].includes(z.colFormat)) z.colFormat = 'lr_asc';
                 if (!z.rowStart) z.rowStart = 'A';
                 if (!z.colStart) z.colStart = '1';
+                if (!z.rowLetterMode || !['a','aa'].includes(z.rowLetterMode)) z.rowLetterMode = 'a';
                 if (!z.ignoreMode || !['skip','reserve'].includes(z.ignoreMode)) z.ignoreMode = 'skip';
                 zones.push(z);
             });
@@ -745,7 +760,10 @@ function renderZonePanels() {
                     <option value="tb_desc" ${(z.rowFormat||'')==='tb_desc'?'selected':''}>C→B→A (ล่าง→บน)</option>
                     <option value="lr_asc" ${(z.rowFormat||'')==='lr_asc'?'selected':''}>A→B→C (ซ้าย→ขวา)</option>
                     <option value="lr_desc" ${(z.rowFormat||'')==='lr_desc'?'selected':''}>C→B→A (ขวา→ซ้าย)</option></select></div>
-                <div class="form-group"><label>Row เริ่ม</label><input type="text" value="${z.rowStart||'A'}" style="width:60px" onchange="zones[${i}].rowStart=this.value.toUpperCase()" placeholder="A"></div>
+                <div class="form-group"><label>Row แบบ</label><select onchange="zones[${i}].rowLetterMode=this.value">
+                    <option value="a" ${(z.rowLetterMode||'a')==='a'?'selected':''}>A B C D ...</option>
+                    <option value="aa" ${(z.rowLetterMode||'')==='aa'?'selected':''}>AA A B C ...</option></select></div>
+                <div class="form-group"><label>Row เริ่ม</label><input type="text" value="${z.rowStart||'A'}" style="width:60px" onchange="zones[${i}].rowStart=this.value.toUpperCase()" placeholder="A" title="ตัวอักษรเริ่มต้น"></div>
                 <div class="form-group"><label>Col (1,2,3..)</label><select onchange="zones[${i}].colFormat=this.value">
                     <option value="lr_asc" ${(z.colFormat||'lr_asc')==='lr_asc'?'selected':''}>1→2→3 (ซ้าย→ขวา)</option>
                     <option value="lr_desc" ${(z.colFormat||'')==='lr_desc'?'selected':''}>3→2→1 (ขวา→ซ้าย)</option>
