@@ -770,6 +770,8 @@ async function saveZoneOrder() {
 
 function renderZonePanels() {
     const c = document.getElementById('zonePanels');
+    const scrollTops = [];
+    c.querySelectorAll('.seat-grid').forEach(el => scrollTops.push(el.scrollTop));
     let h='';
     zones.forEach((z,i)=>{
         h+=`<div class="zone-panel ${i===activeTab?'active':''}" id="zp${i}">`;
@@ -872,6 +874,11 @@ function renderZonePanels() {
         h+=`</div>`;
     });
     c.innerHTML=h;
+    requestAnimationFrame(() => {
+        c.querySelectorAll('.seat-grid').forEach((el, i) => {
+            if (scrollTops[i] !== undefined) el.scrollTop = scrollTops[i];
+        });
+    });
 }
 
 function renderDBZones() {
