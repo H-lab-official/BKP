@@ -97,7 +97,7 @@ app.post('/api/publish', async (req, res) => {
         const zoning = allZones.map((row, idx) => {
             const zd = row.zone_data;
             return {
-                ...(zd.model ? { model: zd.model } : {}),
+                ...(zd.model ? { model: { ID: zd.model.ID } } : {}),
                 area: row.area.toUpperCase(),
                 isHorizontal: zd.isHorizontal !== false,
                 row: parseInt(zd.row) || 0,
@@ -106,15 +106,17 @@ app.post('/api/publish', async (req, res) => {
                 order: idx,
                 channelCount: parseInt(zd.channelCount) || 0,
                 channelsString: JSON.stringify(zd.channels || []),
-                items: (zd.items || []).map(item => ({
-                    ...(item.model ? { model: item.model } : {}),
-                    zoningId: item.zoningId || 0,
-                    channel: parseInt(item.channel) || 0,
-                    name: item.name || '',
-                    pixelId: parseInt(item.pixelId) || 0,
-                    ignore: !!item.ignore,
-                    idIndex: item.idIndex || 0
-                }))
+                items: (zd.items || []).filter((item, i, arr) => {
+                    return arr.findIndex(x => x.idIndex === item.idIndex) === i;
+                }).map(item => {
+                    const o = {};
+                    if (item.channel) o.channel = parseInt(item.channel);
+                    if (item.name) o.name = item.name;
+                    if (item.pixelId) o.pixelId = parseInt(item.pixelId);
+                    if (item.ignore) o.ignore = true;
+                    if (item.idIndex) o.idIndex = item.idIndex;
+                    return o;
+                })
             };
         });
 
@@ -132,7 +134,7 @@ app.post('/api/publish', async (req, res) => {
             brunCount: parseInt(brunCount) || 1,
             image: '',
             name: name || '',
-            model: model || null,
+            model: model ? { ID: model.ID } : null,
             brunItems: JSON.stringify([{ value: 1, title: 'A1' }]),
             maxChannel: parseInt(maxChannel) || 2
         };
@@ -140,30 +142,40 @@ app.post('/api/publish', async (req, res) => {
         const modifiedAreas = allZones.filter(z => z.status !== 'posted').map(z => z.area);
         const unchangedAreas = allZones.filter(z => z.status === 'posted').map(z => z.area);
 
-        console.log(`[PUBLISH] Sending ${zoning.length} zones (${modifiedAreas.length} modified, ${unchangedAreas.length} unchanged), ${totalSeats} seats to ${API_BASE}/seat/save`);
+        const bodyStr = JSON.stringify(requestBody);
+        const bodySize = Buffer.byteLength(bodyStr, 'utf8');
+        console.log(`[PUBLISH] Sending ${zoning.length} zones (${modifiedAreas.length} modified, ${unchangedAreas.length} unchanged), ${totalSeats} seats, payload ${(bodySize / 1024 / 1024).toFixed(2)} MB to ${API_BASE}/seat/save`);
 
-        // POST to real API
         const apiRes = await fetch(API_BASE + '/seat/save', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'languagecode': 'en'
             },
-            body: JSON.stringify(requestBody)
+            body: bodyStr
         });
 
-        const apiData = await apiRes.json();
+        const contentType = apiRes.headers.get('content-type') || '';
+        let apiData;
+        if (contentType.includes('application/json')) {
+            apiData = await apiRes.json();
+        } else {
+            const text = await apiRes.text();
+            console.error(`[PUBLISH] API returned non-JSON (${apiRes.status}):`, text.substring(0, 500));
+            apiData = { error: `API returned ${apiRes.status} with non-JSON response`, preview: text.substring(0, 200) };
+        }
 
-        if (apiRes.ok) {
+        if (apiRes.ok && !apiData.error) {
             await db.markAllPublished(seat_id);
             console.log('[PUBLISH] Success:', apiData);
         }
 
         res.json({
-            success: apiRes.ok,
+            success: apiRes.ok && !apiData.error,
             apiStatus: apiRes.status,
             apiResponse: apiData,
-            sentBody: requestBody,
+            payloadMB: (bodySize / 1024 / 1024).toFixed(2),
+            totalItems: zoning.reduce((s, z) => s + z.items.length, 0),
             modifiedAreas,
             unchangedAreas
         });
