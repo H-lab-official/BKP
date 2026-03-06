@@ -187,7 +187,7 @@ let dbZones = [];
 // ============================================================
 function addZone(data) {
     const zone = data || {
-        area: '', assignAlignment: 'ltr', alignment: 'ltr', rowFormat: 'tb_asc', colFormat: 'lr_asc', rowStart: 'A', colStart: '1', rowLetterMode: 'a', ignoreMode: 'skip', isHorizontal: true, row: 0, column: 0, burnId: 0,
+        area: '', assignAlignment: 'ltr', alignment: 'ltr', rowFormat: 'tb_asc', colFormat: 'lr_asc', rowStart: 'A', colStart: '1', rowLetterMode: 'a', nameIgnoreMode: 'skip', ignoreMode: 'skip', isHorizontal: true, row: 0, column: 0, burnId: 0,
         channelCount: 1, channels: [{ name: zones.length + 1, min: 1, max: 170 }],
         items: [], seatCount: 0, showId: false
     };
@@ -269,10 +269,10 @@ function generateItems(zi) {
 // ============================================================
 // Assign Channels (le() from code.txt)
 // ============================================================
-function assignChannels(zi) {
+function assignChannels(zi, silent) {
     const z = zones[zi];
-    if (!z.items || !z.items.length) { alert('Generate items first'); return; }
-    if (!z.channels || !z.channels.length) { alert('Configure channels first'); return; }
+    if (!z.items || !z.items.length) { if (!silent) alert('Generate items first'); return; }
+    if (!z.channels || !z.channels.length) { if (!silent) alert('Configure channels first'); return; }
     for (let ch of z.channels) { ch.min=parseInt(ch.min); ch.max=parseInt(ch.max); ch.name=parseInt(ch.name);
         if (ch.min<0||ch.max>170||ch.min>ch.max) { alert('Channel range error'); return; } }
     let count = 0;
@@ -306,32 +306,53 @@ function assignChannels(zi) {
 }
 
 // ============================================================
-// Recalc Names (เลื่อนชื่อเมื่อปิดที่นั่ง - ใช้ ignoreMode เหมือน Assign Channels)
+// Recalc Names (เลื่อนชื่อเมื่อปิดที่นั่ง - ใช้ nameIgnoreMode)
 // ============================================================
 function recalcNames(zi) {
     const z = zones[zi];
     if (!z.items || !z.row || !z.column) return;
-    const ignoreMode = z.ignoreMode || 'skip';
-    if (ignoreMode === 'reserve') return; // ไม่เลื่อนลำดับ - เก็บชื่อเดิม
+    const nameIgnoreMode = z.nameIgnoreMode || 'skip';
+    if (nameIgnoreMode === 'reserve') return; // ไม่เลื่อนลำดับ - เก็บชื่อเดิม
 
     const rowDir = z.rowFormat || 'tb_asc';
+    const colDir = z.colFormat || 'lr_asc';
     const letterMode = z.rowLetterMode || 'a';
     let rowOff = letterToNum(z.rowStart || 'A') || 1;
     if (letterMode === 'aa' && (z.rowStart || '').toUpperCase() === 'AA') rowOff = 1;
     const colOff = parseInt(z.colStart) || 1;
 
-    for (let r = 0; r < z.row; r++) {
-        let seq = 0;
+    if (colDir === 'tb_asc' || colDir === 'tb_desc') {
         for (let c = 0; c < z.column; c++) {
-            const idx = r * z.column + c;
-            const it = z.items[idx];
-            if (!it) continue;
-            const rl = getRowLetter(r, c, z.row, z.column, rowDir, rowOff, letterMode);
-            if (it.ignore) {
-                it.name = z.area + ',' + rl + ',-';
-            } else {
-                seq++;
-                it.name = z.area + ',' + rl + ',' + (colOff + seq - 1);
+            const rowOrder = colDir === 'tb_asc' ? [...Array(z.row).keys()] : [...Array(z.row).keys()].reverse();
+            let seq = 0;
+            for (const r of rowOrder) {
+                const idx = r * z.column + c;
+                const it = z.items[idx];
+                if (!it) continue;
+                const rl = getRowLetter(r, c, z.row, z.column, rowDir, rowOff, letterMode);
+                if (it.ignore) {
+                    it.name = z.area + ',' + rl + ',-';
+                } else {
+                    seq++;
+                    it.name = z.area + ',' + rl + ',' + (colOff + seq - 1);
+                }
+            }
+        }
+    } else {
+        for (let r = 0; r < z.row; r++) {
+            const colOrder = colDir === 'lr_asc' ? [...Array(z.column).keys()] : [...Array(z.column).keys()].reverse();
+            let seq = 0;
+            for (const c of colOrder) {
+                const idx = r * z.column + c;
+                const it = z.items[idx];
+                if (!it) continue;
+                const rl = getRowLetter(r, c, z.row, z.column, rowDir, rowOff, letterMode);
+                if (it.ignore) {
+                    it.name = z.area + ',' + rl + ',-';
+                } else {
+                    seq++;
+                    it.name = z.area + ',' + rl + ',' + (colOff + seq - 1);
+                }
             }
         }
     }
@@ -358,6 +379,7 @@ function handleSeatClick(zi, idx, e) {
         z.items[idx].ignore = !z.items[idx].ignore;
         z.seatCount = z.items.filter(i => !i.ignore).length;
         recalcNames(zi);
+        assignChannels(zi, 1);
         updateTotals();
         renderAll();
     }
@@ -477,7 +499,7 @@ async function saveZoneToDB(zi) {
     if (!seatId) { alert('Enter Seat ID'); return; }
 
     let zoneData = {
-        area: z.area.toUpperCase(), assignAlignment: z.assignAlignment||'ltr', alignment: z.assignAlignment||'ltr', rowFormat: z.rowFormat||'tb_asc', colFormat: z.colFormat||'lr_asc', rowStart: z.rowStart||'A', colStart: z.colStart||'1', rowLetterMode: z.rowLetterMode||'a', ignoreMode: z.ignoreMode||'skip', isHorizontal: ['ltr','rtl','ltr_bt','rtl_bt'].includes(z.assignAlignment||'ltr'), row: z.row, column: z.column,
+        area: z.area.toUpperCase(), assignAlignment: z.assignAlignment||'ltr', alignment: z.assignAlignment||'ltr', rowFormat: z.rowFormat||'tb_asc', colFormat: z.colFormat||'lr_asc', rowStart: z.rowStart||'A', colStart: z.colStart||'1', rowLetterMode: z.rowLetterMode||'a', nameIgnoreMode: z.nameIgnoreMode||'skip', ignoreMode: z.ignoreMode||'skip', isHorizontal: ['ltr','rtl','ltr_bt','rtl_bt'].includes(z.assignAlignment||'ltr'), row: z.row, column: z.column,
         burnId: z.burnId, channelCount: z.channelCount, channels: z.channels, items: [...(z.items||[])],
         seatCount: z.seatCount, model: z.model || null, tabOrder: zi
     };
@@ -552,6 +574,7 @@ function loadZoneToEditor(dbZone) {
     if (!zd.rowStart) zd.rowStart = 'A';
     if (!zd.colStart) zd.colStart = '1';
     if (!zd.rowLetterMode || !['a','aa'].includes(zd.rowLetterMode)) zd.rowLetterMode = 'a';
+    if (!zd.nameIgnoreMode || !['skip','reserve'].includes(zd.nameIgnoreMode)) zd.nameIgnoreMode = 'skip';
     if (!zd.ignoreMode || !['skip','reserve'].includes(zd.ignoreMode)) zd.ignoreMode = 'skip';
     // Check if already in editor
     const existing = zones.findIndex(z => z.area && z.area.toUpperCase() === dbZone.area.toUpperCase());
@@ -596,6 +619,7 @@ async function loadFromAPI() {
                 if (!z.rowStart) z.rowStart = 'A';
                 if (!z.colStart) z.colStart = '1';
                 if (!z.rowLetterMode || !['a','aa'].includes(z.rowLetterMode)) z.rowLetterMode = 'a';
+                if (!z.nameIgnoreMode || !['skip','reserve'].includes(z.nameIgnoreMode)) z.nameIgnoreMode = 'skip';
                 if (!z.ignoreMode || !['skip','reserve'].includes(z.ignoreMode)) z.ignoreMode = 'skip';
                 zones.push(z);
             });
@@ -770,14 +794,17 @@ function renderZonePanels() {
                     <option value="tb_asc" ${(z.colFormat||'')==='tb_asc'?'selected':''}>1→2→3 (บน→ล่าง)</option>
                     <option value="tb_desc" ${(z.colFormat||'')==='tb_desc'?'selected':''}>3→2→1 (ล่าง→บน)</option></select></div>
                 <div class="form-group"><label>Col เริ่ม</label><input type="number" value="${z.colStart||1}" min="0" style="width:60px" onchange="zones[${i}].colStart=parseInt(this.value)"></div>
+                <div class="form-group"><label>ปิดที่นั่ง (ชื่อ)</label><select onchange="zones[${i}].nameIgnoreMode=this.value;recalcNames(${i});renderAll()">
+                    <option value="skip" ${((z.nameIgnoreMode||'skip')==='skip')?'selected':''}>เลื่อนลำดับ</option>
+                    <option value="reserve" ${((z.nameIgnoreMode||'')==='reserve')?'selected':''}>ไม่เลื่อนลำดับ</option></select></div>
                 <button class="btn btn-gold" onclick="generateItems(${i})">Generate Items</button>
             </div></div>`;
         h+=`<div class="group-box">
             <div class="group-title">2. Assign Channels</div>
             <div class="form-row">
                 <div class="form-group"><label>Burn</label><input type="number" value="${z.burnId||0}" min="0" style="width:60px" onchange="zones[${i}].burnId=parseInt(this.value)"></div>
-                <div class="form-group"><label>Controller Count</label><input type="number" value="${z.channelCount||0}" min="0" style="width:60px" onchange="zones[${i}].channelCount=parseInt(this.value);updateChannelCount(${i})"></div>
-                <div class="form-group"><label>Order</label><select onchange="zones[${i}].assignAlignment=this.value;zones[${i}].isHorizontal=['ltr','rtl','ltr_bt','rtl_bt'].includes(this.value);renderAll()">
+                <div class="form-group"><label>Controller Count</label><input type="number" value="${z.channelCount||0}" min="0" style="width:60px" onchange="zones[${i}].channelCount=parseInt(this.value);updateChannelCount(${i});assignChannels(${i},1)"></div>
+                <div class="form-group"><label>Order</label><select onchange="zones[${i}].assignAlignment=this.value;zones[${i}].isHorizontal=['ltr','rtl','ltr_bt','rtl_bt'].includes(this.value);assignChannels(${i},1)">
                     <optgroup label="แนวนอน (Row)">
                     <option value="ltr" ${((z.assignAlignment||'ltr')==='ltr')?'selected':''}>ซ้าย→ขวา (บน→ล่าง)</option>
                     <option value="rtl" ${((z.assignAlignment||'')==='rtl')?'selected':''}>ขวา→ซ้าย (บน→ล่าง)</option>
@@ -790,7 +817,7 @@ function renderZonePanels() {
                     <option value="btt" ${((z.assignAlignment||'')==='btt')?'selected':''}>ล่าง↑บน (ซ้าย→ขวา)</option>
                     <option value="btt_rl" ${((z.assignAlignment||'')==='btt_rl')?'selected':''}>ล่าง↑บน (ขวา→ซ้าย)</option>
                     </optgroup></select></div>
-                <div class="form-group"><label>ปิดที่นั่ง</label><select onchange="zones[${i}].ignoreMode=this.value">
+                <div class="form-group"><label>ปิดที่นั่ง (Channel)</label><select onchange="zones[${i}].ignoreMode=this.value;assignChannels(${i},1)">
                     <option value="skip" ${((z.ignoreMode||'skip')==='skip')?'selected':''}>เลื่อนลำดับ</option>
                     <option value="reserve" ${((z.ignoreMode||'')==='reserve')?'selected':''}>ไม่เลื่อนลำดับ</option></select></div>
                 <button class="btn btn-blue" onclick="assignChannels(${i})">Assign Channels</button>
@@ -799,12 +826,12 @@ function renderZonePanels() {
             h+=`<table class="channel-table"><thead><tr><th>#</th><th>Name</th><th>Min</th><th>Max</th><th>Order</th></tr></thead><tbody>`;
             z.channels.forEach((ch,ci)=>{
                 h+=`<tr><td>${ci+1}</td>
-                    <td><input type="number" value="${ch.name||''}" onchange="zones[${i}].channels[${ci}].name=parseInt(this.value)"></td>
-                    <td><input type="number" value="${ch.min||1}" onchange="zones[${i}].channels[${ci}].min=parseInt(this.value)"></td>
-                    <td><input type="number" value="${ch.max||170}" onchange="zones[${i}].channels[${ci}].max=parseInt(this.value)"></td>
+                    <td><input type="number" value="${ch.name||''}" onchange="zones[${i}].channels[${ci}].name=parseInt(this.value);assignChannels(${i},1)"></td>
+                    <td><input type="number" value="${ch.min||1}" onchange="zones[${i}].channels[${ci}].min=parseInt(this.value);assignChannels(${i},1)"></td>
+                    <td><input type="number" value="${ch.max||170}" onchange="zones[${i}].channels[${ci}].max=parseInt(this.value);assignChannels(${i},1)"></td>
                     <td style="white-space:nowrap">
-                        <button class="btn-arrow" onclick="moveChannel(${i},${ci},-1)" ${ci===0?'disabled':''} title="ขึ้น">▲</button>
-                        <button class="btn-arrow" onclick="moveChannel(${i},${ci},1)" ${ci===z.channels.length-1?'disabled':''} title="ลง">▼</button>
+                        <button class="btn-arrow" onclick="moveChannel(${i},${ci},-1);assignChannels(${i},1)" ${ci===0?'disabled':''} title="ขึ้น">▲</button>
+                        <button class="btn-arrow" onclick="moveChannel(${i},${ci},1);assignChannels(${i},1)" ${ci===z.channels.length-1?'disabled':''} title="ลง">▼</button>
                     </td></tr>`; });
             h+=`</tbody></table>`;
         }
