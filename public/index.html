@@ -37,6 +37,8 @@
         .seat-grid{display:block;width:100%;margin:12px 0;max-height:50vh;overflow:auto;padding:8px;background:#0d1b36;border-radius:8px}
         .seat-row{display:flex;gap:3px;margin-bottom:3px;width:100%}
         .seat-cell{flex:1;min-width:40px;height:36px;display:flex;align-items:center;justify-content:center;font-size:.65rem;border-radius:4px;cursor:pointer;transition:all .15s;border:1px solid transparent;user-select:none}
+        .seat-grid.square .seat-row{gap:4px;margin-bottom:4px;flex-wrap:nowrap}
+        .seat-grid.square .seat-cell{width:44px;height:44px;min-width:44px;min-height:44px;flex:none;box-sizing:border-box}
         .seat-cell.normal{background:#1e40af;color:#bfdbfe;border-color:#2563eb}.seat-cell.normal:hover{background:#2563eb;transform:scale(1.05)}
         .seat-cell.ignored{background:#374151;color:#6b7280;border-color:#4b5563;text-decoration:line-through}.seat-cell.ignored:hover{background:#4b5563}
         .channel-table{border-collapse:collapse;margin:8px 0}
@@ -181,6 +183,7 @@ let zones = [];
 let activeTab = 0;
 let seatModel = null;
 let dbZones = [];
+let seatGridStyle = 'square';
 
 // ============================================================
 // Zone Management
@@ -372,6 +375,7 @@ function toggleEditMode() {
 }
 
 function handleSeatClick(zi, idx, e) {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
     if (editMode) {
         editItem(zi, idx);
     } else {
@@ -776,8 +780,15 @@ async function saveZoneOrder() {
 
 function renderZonePanels() {
     const c = document.getElementById('zonePanels');
-    const scrollTops = [];
-    c.querySelectorAll('.seat-grid').forEach(el => scrollTops.push(el.scrollTop));
+    const scrollByZone = {};
+    zones.forEach((z, i) => {
+        const panel = document.getElementById('zp' + i);
+        if (panel) {
+            const grid = panel.querySelector('.seat-grid');
+            if (grid) scrollByZone[i] = grid.scrollTop;
+        }
+    });
+    const windowScrollY = window.scrollY || document.documentElement.scrollTop;
     let h='';
     zones.forEach((z,i)=>{
         h+=`<div class="zone-panel ${i===activeTab?'active':''}" id="zp${i}">`;
@@ -845,6 +856,11 @@ function renderZonePanels() {
             <button class="btn btn-green" onclick="saveZoneToDB(${i})">Save to DB</button>
             <button class="btn btn-red btn-sm" onclick="removeZone(${i})">Delete</button></div>`;
         h+=`<div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap">
+            <div class="display-toggle" style="margin:0"><label>รูปแบบตาราง:</label>
+            <select onchange="seatGridStyle=this.value;renderAll()" style="padding:6px 10px;border-radius:6px;background:#0f3460;color:#e0e0e0;border:1px solid #1a1a4e">
+            <option value="square" ${seatGridStyle==='square'?'selected':''}>จัตุรัส (44×44)</option>
+            <option value="original" ${seatGridStyle==='original'?'selected':''}>แบบเดิม</option>
+            </select></div>
             <div class="display-toggle" style="margin:0"><label>Show:</label><label style="color:#e0e0e0">Name</label>
             <label class="toggle-switch"><input type="checkbox" ${z.showId?'checked':''} onchange="zones[${i}].showId=this.checked;renderAll()">
             <span class="toggle-slider"></span></label><label style="color:#e0e0e0">Ch,Pixel</label></div>
@@ -861,7 +877,7 @@ function renderZonePanels() {
             <span id="ie_info_${i}" style="color:#9ca3af;font-size:.78rem;margin-left:4px"></span>
         </div>`;
         if (z.items&&z.items.length>0&&z.row>0&&z.column>0) {
-            h+=`<div class="seat-grid ${editMode?'edit-mode':''}">`;
+            h+=`<div class="seat-grid ${editMode?'edit-mode':''} ${seatGridStyle==='square'?'square':''}">`;
             for(let r=0;r<z.row;r++){h+=`<div class="seat-row">`;
                 for(let c=0;c<z.column;c++){const it=z.items[r*z.column+c];if(it){
                     const cls=it.ignore?'ignored':'normal';
@@ -877,9 +893,20 @@ function renderZonePanels() {
         h+=`</div>`;
     });
     c.innerHTML=h;
+    function restoreScroll() {
+        Object.keys(scrollByZone).forEach(i => {
+            const panel = document.getElementById('zp' + i);
+            if (panel) {
+                const grid = panel.querySelector('.seat-grid');
+                if (grid) grid.scrollTop = scrollByZone[i];
+            }
+        });
+        window.scrollTo(0, windowScrollY);
+    }
     requestAnimationFrame(() => {
-        c.querySelectorAll('.seat-grid').forEach((el, i) => {
-            if (scrollTops[i] !== undefined) el.scrollTop = scrollTops[i];
+        requestAnimationFrame(() => {
+            restoreScroll();
+            setTimeout(restoreScroll, 50);
         });
     });
 }
