@@ -81,6 +81,14 @@
         .db-table tr:hover{background:rgba(255,215,0,.03)}
         .db-table .actions{display:flex;gap:4px;flex-wrap:wrap}
         .empty-state{text-align:center;padding:40px;color:#6b7280;font-style:italic}
+        /* Pagination */
+        .pagination-wrap{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-top:12px;padding:10px 0;border-top:1px solid #1a1a4e}
+        .pagination-info{font-size:.8rem;color:#9ca3af}
+        .pagination{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+        .pagination .btn-page{padding:6px 12px;min-width:36px;font-size:.8rem}
+        .pagination .btn-page.active{background:#FFD700;color:#1a1a2e;border-color:#FFD700}
+        .pagination .btn-page:disabled{opacity:.5;cursor:not-allowed}
+        .pagination select{width:auto;padding:4px 8px;font-size:.8rem}
         .inline-edit{background:#1a2744;border:2px solid #FFD700;border-radius:8px;padding:12px 16px;margin:8px 0;display:none;gap:12px;align-items:flex-end;flex-wrap:wrap}
         .inline-edit.active{display:flex}
         .inline-edit .form-group{margin:0}
@@ -223,8 +231,12 @@ let seatModel = null;
 let dbZones = [];
 let seatGridStyle = 'square';
 let viewZonesMode = 'by_seat'; // 'all' | 'by_seat'
+let dbZonesPage = 1;
+let dbZonesPageSize = 20;
 
 function setViewZonesMode(mode) { viewZonesMode = mode; }
+function setDbZonesPage(p) { dbZonesPage = Math.max(1, Math.min(p, Math.ceil(dbZones.length / dbZonesPageSize) || 1)); renderDBZones(); }
+function setDbZonesPageSize(n) { dbZonesPageSize = Math.max(5, parseInt(n) || 20); dbZonesPage = 1; renderDBZones(); }
 
 // ============================================================
 // Zone Management
@@ -589,6 +601,7 @@ async function refreshDB() {
         const url = viewZonesMode === 'all' ? '/api/zones' : '/api/zones?seat_id=' + document.getElementById('seatId').value;
         const res = await fetch(url);
         dbZones = await res.json();
+        dbZonesPage = 1;
         renderDBZones();
         document.getElementById('dbTotalCount').textContent = dbZones.length;
         document.getElementById('dbModifiedCount').textContent = dbZones.filter(z=>z.status!=='posted').length;
@@ -985,12 +998,18 @@ function renderDBZones() {
     const c = document.getElementById('dbZonesContainer');
     const emptyMsg = viewZonesMode === 'all' ? 'ไม่มีโซนใน database' : 'ไม่มีโซนสำหรับ Seat ID นี้';
     if (!dbZones.length) { c.innerHTML='<div class="empty-state">'+emptyMsg+'</div>'; return; }
+    const total = dbZones.length;
+    const totalPages = Math.ceil(total / dbZonesPageSize) || 1;
+    const page = Math.max(1, Math.min(dbZonesPage, totalPages));
+    dbZonesPage = page;
+    const start = (page - 1) * dbZonesPageSize;
+    const pageZones = dbZones.slice(start, start + dbZonesPageSize);
     const showSeatIdCol = viewZonesMode === 'all';
     let h=`<table class="db-table"><thead><tr>
-        <th style="width:44px"><input type="checkbox" id="dbZoneSelectAll" title="เลือกทั้งหมด" onchange="toggleSelectAllDBZones(this.checked)"></th>`;
+        <th style="width:44px"><input type="checkbox" id="dbZoneSelectAll" title="เลือกทั้งหมด (หน้านี้)" onchange="toggleSelectAllDBZones(this.checked)"></th>`;
     if (showSeatIdCol) h+=`<th>Seat ID</th>`;
     h+=`<th>Area</th><th>Created By</th><th>Seats</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead><tbody>`;
-    dbZones.forEach(z=>{
+    pageZones.forEach(z=>{
         const seats = (z.zone_data.items||[]).filter(i=>!i.ignore).length;
         const statusCls = z.status==='posted'?'badge-green': z.status==='ready'?'badge-blue':'badge-yellow';
         const statusLabel = z.status==='posted'?'posted': z.status==='draft'?'modified':'ready';
@@ -1010,6 +1029,31 @@ function renderDBZones() {
             </div></td></tr>`;
     });
     h+=`</tbody></table>`;
+    // Pagination bar
+    const from = start + 1;
+    const to = Math.min(start + dbZonesPageSize, total);
+    h+=`<div class="pagination-wrap">
+        <div class="pagination-info">
+            แสดง ${from}-${to} จาก ${total} โซน
+            <label style="margin-left:12px">ต่อหน้า</label>
+            <select onchange="setDbZonesPageSize(this.value)" style="margin-left:4px">`;
+    [10,20,50,100].forEach(n=>{ h+=`<option value="${n}" ${dbZonesPageSize===n?'selected':''}>${n}</option>`; });
+    h+=`</select>
+        </div>
+        <div class="pagination">
+            <button class="btn btn-sm btn-outline btn-page" onclick="setDbZonesPage(1)" ${page<=1?'disabled':''}>แรก</button>
+            <button class="btn btn-sm btn-outline btn-page" onclick="setDbZonesPage(${page-1})" ${page<=1?'disabled':''}>‹ ก่อน</button>`;
+    const maxButtons = 5;
+    let pageStart = Math.max(1, page - Math.floor(maxButtons/2));
+    let pageEnd = Math.min(totalPages, pageStart + maxButtons - 1);
+    if (pageEnd - pageStart + 1 < maxButtons) pageStart = Math.max(1, pageEnd - maxButtons + 1);
+    for (let i = pageStart; i <= pageEnd; i++) {
+        h+=`<button class="btn btn-sm btn-outline btn-page ${i===page?'active':''}" onclick="setDbZonesPage(${i})">${i}</button>`;
+    }
+    h+=`<button class="btn btn-sm btn-outline btn-page" onclick="setDbZonesPage(${page+1})" ${page>=totalPages?'disabled':''}>ถัดไป ›</button>
+            <button class="btn btn-sm btn-outline btn-page" onclick="setDbZonesPage(${totalPages})" ${page>=totalPages?'disabled':''}>สุดท้าย</button>
+        </div>
+    </div>`;
     c.innerHTML=h;
 }
 
