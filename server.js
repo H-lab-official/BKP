@@ -14,12 +14,11 @@ app.use(express.static(path.join(__dirname, 'public')));
 // API Routes
 // ============================================================
 
-// GET /api/zones?seat_id=6
+// GET /api/zones?seat_id=6 (optional: omit for All Seat ID)
 app.get('/api/zones', async (req, res) => {
     try {
         const seatId = req.query.seat_id;
-        if (!seatId) return res.status(400).json({ error: 'seat_id required' });
-        const zones = await db.getZones(seatId);
+        const zones = seatId ? await db.getZones(seatId) : await db.getAllZones();
         res.json(zones);
     } catch (err) {
         console.error('[GET /api/zones]', err.message);
@@ -63,6 +62,24 @@ app.delete('/api/zones/:id', async (req, res) => {
         res.json({ ok: true });
     } catch (err) {
         console.error('[DELETE /api/zones/:id]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/zones/copy - Push zones from Seat A to Seat B
+app.post('/api/zones/copy', async (req, res) => {
+    try {
+        const { source_seat_id, target_seat_id, created_by } = req.body;
+        if (!source_seat_id || !target_seat_id) {
+            return res.status(400).json({ error: 'source_seat_id and target_seat_id required' });
+        }
+        if (source_seat_id === target_seat_id) {
+            return res.status(400).json({ error: 'Source and target Seat ID must be different' });
+        }
+        const result = await db.copyZonesToSeat(source_seat_id, target_seat_id, created_by || '');
+        res.json({ success: true, count: result.count, message: `Copied ${result.count} zone(s) to Seat ID ${target_seat_id}` });
+    } catch (err) {
+        console.error('[POST /api/zones/copy]', err.message);
         res.status(500).json({ error: err.message });
     }
 });

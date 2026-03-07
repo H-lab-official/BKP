@@ -121,14 +121,52 @@
         </div>
     </div>
 
+    <!-- ===== โหลดโซน: All Seat ID / By Seat ID ===== -->
+    <div class="card">
+        <div class="card-title">โหลดโซนจาก DB</div>
+        <div class="form-row" style="align-items:center">
+            <div class="form-group" style="flex-direction:row;align-items:center;gap:12px">
+                <label style="margin:0">โหมด:</label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0">
+                    <input type="radio" name="viewZonesMode" value="all" onchange="setViewZonesMode('all'); refreshDB();"> All Seat ID
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0">
+                    <input type="radio" name="viewZonesMode" value="by_seat" checked onchange="setViewZonesMode('by_seat'); refreshDB();"> By Seat ID
+                </label>
+            </div>
+            <span class="badge badge-gray" style="margin-left:8px">By Seat ID ใช้ Seat ID จาก Config ด้านบน</span>
+        </div>
+    </div>
+
+    <!-- ===== Push โซนจาก Seat A → Seat B ===== -->
+    <div class="card">
+        <div class="card-title">Push โซน (คัดลอกจาก Seat A ไป Seat B)</div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>จาก Seat ID (A)</label>
+                <input type="text" id="pushSourceSeatId" placeholder="6" style="width:80px">
+            </div>
+            <div class="form-group">
+                <label>ไปยัง Seat ID (B)</label>
+                <input type="text" id="pushTargetSeatId" placeholder="7" style="width:80px">
+            </div>
+            <button class="btn btn-gold" onclick="pushZonesToSeat()">Push โซนจาก A → B</button>
+        </div>
+    </div>
+
     <!-- ===== Saved Zones (from DB) ===== -->
     <div class="card">
         <div class="card-title">
             Saved Zones (Database)
-            <button class="btn btn-sm btn-outline" onclick="refreshDB()" style="margin-left:auto">Refresh</button>
+            <span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <button class="btn btn-sm btn-outline" onclick="toggleSelectAllDBZones(true)">เลือกทั้งหมด</button>
+                <button class="btn btn-sm btn-outline" onclick="toggleSelectAllDBZones(false)">ยกเลิกเลือก</button>
+                <button class="btn btn-sm btn-green" onclick="loadSelectedZonesFromDB()">โหลดโซนที่เลือก</button>
+                <button class="btn btn-sm btn-outline" onclick="refreshDB()">Refresh</button>
+            </span>
         </div>
         <div id="dbZonesContainer">
-            <div class="empty-state">Click "Refresh" to load zones from database</div>
+            <div class="empty-state">เลือกโหมดแล้วกด Refresh เพื่อโหลดโซนจาก database</div>
         </div>
     </div>
 
@@ -184,6 +222,9 @@ let activeTab = 0;
 let seatModel = null;
 let dbZones = [];
 let seatGridStyle = 'square';
+let viewZonesMode = 'by_seat'; // 'all' | 'by_seat'
+
+function setViewZonesMode(mode) { viewZonesMode = mode; }
 
 // ============================================================
 // Zone Management
@@ -540,16 +581,45 @@ async function saveZoneToDB(zi) {
 // DB Operations
 // ============================================================
 async function refreshDB() {
-    const seatId = document.getElementById('seatId').value;
-    if (!seatId) return;
+    if (viewZonesMode === 'by_seat') {
+        const seatId = document.getElementById('seatId').value;
+        if (!seatId) { addLog('info', 'กรุณาระบุ Seat ID ใน Config'); return; }
+    }
     try {
-        const res = await fetch('/api/zones?seat_id='+seatId);
+        const url = viewZonesMode === 'all' ? '/api/zones' : '/api/zones?seat_id=' + document.getElementById('seatId').value;
+        const res = await fetch(url);
         dbZones = await res.json();
         renderDBZones();
         document.getElementById('dbTotalCount').textContent = dbZones.length;
         document.getElementById('dbModifiedCount').textContent = dbZones.filter(z=>z.status!=='posted').length;
         document.getElementById('dbPostedCount').textContent = dbZones.filter(z=>z.status==='posted').length;
     } catch(e) { addLog('error', 'Refresh failed: '+e.message); }
+}
+
+async function pushZonesToSeat() {
+    const source = (document.getElementById('pushSourceSeatId').value || '').trim();
+    const target = (document.getElementById('pushTargetSeatId').value || '').trim();
+    if (!source || !target) { addLog('error', 'กรุณาระบุ จาก Seat ID (A) และ ไปยัง Seat ID (B)'); return; }
+    if (source === target) { addLog('error', 'Seat A และ Seat B ต้องไม่เหมือนกัน'); return; }
+    if (!confirm(`Push โซนทั้งหมดจาก Seat ID ${source} ไปยัง Seat ID ${target}?\n(โซนที่ B ที่ชื่อซ้ำจะถูก overwrite)`)) return;
+    try {
+        const res = await fetch('/api/zones/copy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                source_seat_id: source,
+                target_seat_id: target,
+                created_by: document.getElementById('userName').value || ''
+            })
+        });
+        const data = await res.json();
+        if (data.success) {
+            addLog('success', data.message || `Push สำเร็จ: ${data.count} โซน`);
+            refreshDB();
+        } else {
+            addLog('error', data.error || JSON.stringify(data));
+        }
+    } catch(e) { addLog('error', 'Push failed: '+e.message); }
 }
 
 async function changeStatus(id, status) {
@@ -913,9 +983,13 @@ function renderZonePanels() {
 
 function renderDBZones() {
     const c = document.getElementById('dbZonesContainer');
-    if (!dbZones.length) { c.innerHTML='<div class="empty-state">No zones saved yet for this Seat ID</div>'; return; }
+    const emptyMsg = viewZonesMode === 'all' ? 'ไม่มีโซนใน database' : 'ไม่มีโซนสำหรับ Seat ID นี้';
+    if (!dbZones.length) { c.innerHTML='<div class="empty-state">'+emptyMsg+'</div>'; return; }
+    const showSeatIdCol = viewZonesMode === 'all';
     let h=`<table class="db-table"><thead><tr>
-        <th>Area</th><th>Created By</th><th>Seats</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead><tbody>`;
+        <th style="width:44px"><input type="checkbox" id="dbZoneSelectAll" title="เลือกทั้งหมด" onchange="toggleSelectAllDBZones(this.checked)"></th>`;
+    if (showSeatIdCol) h+=`<th>Seat ID</th>`;
+    h+=`<th>Area</th><th>Created By</th><th>Seats</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead><tbody>`;
     dbZones.forEach(z=>{
         const seats = (z.zone_data.items||[]).filter(i=>!i.ignore).length;
         const statusCls = z.status==='posted'?'badge-green': z.status==='ready'?'badge-blue':'badge-yellow';
@@ -923,18 +997,43 @@ function renderDBZones() {
         const rowStyle = z.status!=='posted'?'background:rgba(255,152,0,0.08);':'';
         const time = new Date(z.updated_at).toLocaleString();
         h+=`<tr style="${rowStyle}">
-            <td><strong>${z.area}</strong></td>
+            <td><input type="checkbox" class="db-zone-select" data-zone-id="${z.id}" title="เลือกโซนนี้"></td>`;
+        if (showSeatIdCol) h+=`<td><strong>${z.seat_id||'-'}</strong></td>`;
+        h+=`<td><strong>${z.area}</strong></td>
             <td>${z.created_by||'-'}</td>
             <td>${seats}</td>
             <td><span class="badge ${statusCls}">${statusLabel}</span></td>
             <td style="font-size:.78rem">${time}</td>
             <td><div class="actions">
-                <button class="btn btn-sm btn-blue" onclick='loadZoneToEditor(${JSON.stringify(z).replace(/'/g,"&#39;")})'>Load</button>
+                <button class="btn btn-sm btn-blue" onclick='loadZoneToEditorById(${z.id})'>Load</button>
                 <button class="btn btn-sm btn-red" onclick="deleteFromDB(${z.id})">Del</button>
             </div></td></tr>`;
     });
     h+=`</tbody></table>`;
     c.innerHTML=h;
+}
+
+function loadZoneToEditorById(zoneId) {
+    const dbZone = dbZones.find(z => z.id == zoneId);
+    if (dbZone) loadZoneToEditor(dbZone);
+}
+
+function toggleSelectAllDBZones(checked) {
+    const el = document.getElementById('dbZoneSelectAll');
+    document.querySelectorAll('.db-zone-select').forEach(cb => { cb.checked = !!checked; });
+    if (el) el.checked = !!checked;
+}
+
+function loadSelectedZonesFromDB() {
+    const checked = document.querySelectorAll('.db-zone-select:checked');
+    if (!checked.length) { addLog('info', 'กรุณาเลือกโซนที่ต้องการโหลด'); return; }
+    const ids = Array.from(checked).map(cb => cb.getAttribute('data-zone-id'));
+    let loaded = 0;
+    ids.forEach(id => {
+        const z = dbZones.find(z => z.id == id);
+        if (z) { loadZoneToEditor(z); loaded++; }
+    });
+    addLog('success', `โหลด ${loaded} โซนเข้า Editor แล้ว`);
 }
 
 // ============================================================

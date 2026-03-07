@@ -66,6 +66,31 @@ async function getZones(seatId) {
     return res.rows;
 }
 
+// Get all zones from all seat_ids (for "All Seat ID" view)
+async function getAllZones() {
+    const res = await pool.query(
+        `SELECT * FROM seat_zones
+         ORDER BY seat_id ASC, COALESCE((zone_data->>'tabOrder')::int, 999) ASC, area ASC`
+    );
+    return res.rows;
+}
+
+// Copy all zones from source_seat_id to target_seat_id (push Seat A → Seat B)
+async function copyZonesToSeat(sourceSeatId, targetSeatId, createdBy) {
+    const zones = await getZones(sourceSeatId);
+    const created = [];
+    for (const row of zones) {
+        const zone = await saveZone(
+            targetSeatId,
+            row.area,
+            row.zone_data,
+            createdBy || row.created_by || ''
+        );
+        created.push(zone);
+    }
+    return { count: created.length, zones: created };
+}
+
 // Save or update a zone (upsert by seat_id + area)
 async function saveZone(seatId, area, zoneData, createdBy) {
     // Check if exists
@@ -146,4 +171,4 @@ async function updateZoneOrders(seatId, orders) {
     }
 }
 
-module.exports = { pool, initDB, getZones, saveZone, updateStatus, deleteZone, getReadyZones, markPublished, markAllPublished, updateZoneOrders };
+module.exports = { pool, initDB, getZones, getAllZones, saveZone, copyZonesToSeat, updateStatus, deleteZone, getReadyZones, markPublished, markAllPublished, updateZoneOrders };
