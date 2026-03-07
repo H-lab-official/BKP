@@ -7,7 +7,7 @@ const app = express();
 const PORT = process.env.PORT || 5173;
 const API_BASE = process.env.API_BASE_URL || 'https://api.bklightstick.bkppentertainment.com/event';
 
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '100mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ============================================================
@@ -94,10 +94,26 @@ app.post('/api/publish', async (req, res) => {
         allZones.sort((a, b) => (a.zone_data.tabOrder ?? 999) - (b.zone_data.tabOrder ?? 999));
 
         // Build zoning array from ALL zones (sorted by tab order)
+        // IMPORTANT: items must be sorted by idIndex for correct position mapping (set 1, set 2)
         const zoning = allZones.map((row, idx) => {
             const zd = row.zone_data;
+            const zoneId = (zd.model && zd.model.ID) ? zd.model.ID : 0;
+            const rawItems = zd.items || [];
+            // Deduplicate by idIndex (keep first), then sort by idIndex for correct position
+            const items = rawItems
+                .filter((item, i, arr) => arr.findIndex(x => (x.idIndex ?? 0) === (item.idIndex ?? 0)) === i)
+                .sort((a, b) => (a.idIndex ?? 0) - (b.idIndex ?? 0))
+                .map(item => ({
+                    ...(item.model ? { model: item.model } : {}),
+                    zoningId: item.zoningId || zoneId,
+                    channel: parseInt(item.channel) || 0,
+                    name: item.name || '',
+                    pixelId: parseInt(item.pixelId) || 0,
+                    ignore: !!item.ignore,
+                    idIndex: item.idIndex ?? 0
+                }));
             return {
-                ...(zd.model ? { model: { ID: zd.model.ID } } : {}),
+                ...(zd.model ? { model: zd.model } : {}),
                 area: row.area.toUpperCase(),
                 isHorizontal: zd.isHorizontal !== false,
                 row: parseInt(zd.row) || 0,
@@ -106,17 +122,7 @@ app.post('/api/publish', async (req, res) => {
                 order: idx,
                 channelCount: parseInt(zd.channelCount) || 0,
                 channelsString: JSON.stringify(zd.channels || []),
-                items: (zd.items || []).filter((item, i, arr) => {
-                    return arr.findIndex(x => x.idIndex === item.idIndex) === i;
-                }).map(item => {
-                    const o = {};
-                    if (item.channel) o.channel = parseInt(item.channel);
-                    if (item.name) o.name = item.name;
-                    if (item.pixelId) o.pixelId = parseInt(item.pixelId);
-                    if (item.ignore) o.ignore = true;
-                    if (item.idIndex) o.idIndex = item.idIndex;
-                    return o;
-                })
+                items
             };
         });
 
@@ -134,7 +140,7 @@ app.post('/api/publish', async (req, res) => {
             brunCount: parseInt(brunCount) || 1,
             image: '',
             name: name || '',
-            model: model ? { ID: model.ID } : null,
+            model: model || null,
             brunItems: JSON.stringify([{ value: 1, title: 'A1' }]),
             maxChannel: parseInt(maxChannel) || 2
         };
@@ -142,9 +148,7 @@ app.post('/api/publish', async (req, res) => {
         const modifiedAreas = allZones.filter(z => z.status !== 'posted').map(z => z.area);
         const unchangedAreas = allZones.filter(z => z.status === 'posted').map(z => z.area);
 
-        const bodyStr = JSON.stringify(requestBody);
-        const bodySize = Buffer.byteLength(bodyStr, 'utf8');
-        console.log(`[PUBLISH] Sending ${zoning.length} zones (${modifiedAreas.length} modified, ${unchangedAreas.length} unchanged), ${totalSeats} seats, payload ${(bodySize / 1024 / 1024).toFixed(2)} MB to ${API_BASE}/seat/save`);
+        console.log(`[PUBLISH] Sending ${zoning.length} zones (${modifiedAreas.length} modified, ${unchangedAreas.length} unchanged), ${totalSeats} seats to ${API_BASE}/seat/save`);
 
         const apiRes = await fetch(API_BASE + '/seat/save', {
             method: 'POST',
@@ -152,30 +156,21 @@ app.post('/api/publish', async (req, res) => {
                 'Content-Type': 'application/json',
                 'languagecode': 'en'
             },
-            body: bodyStr
+            body: JSON.stringify(requestBody)
         });
 
-        const contentType = apiRes.headers.get('content-type') || '';
-        let apiData;
-        if (contentType.includes('application/json')) {
-            apiData = await apiRes.json();
-        } else {
-            const text = await apiRes.text();
-            console.error(`[PUBLISH] API returned non-JSON (${apiRes.status}):`, text.substring(0, 500));
-            apiData = { error: `API returned ${apiRes.status} with non-JSON response`, preview: text.substring(0, 200) };
-        }
+        const apiData = await apiRes.json();
 
-        if (apiRes.ok && !apiData.error) {
+        if (apiRes.ok) {
             await db.markAllPublished(seat_id);
             console.log('[PUBLISH] Success:', apiData);
         }
 
         res.json({
-            success: apiRes.ok && !apiData.error,
+            success: apiRes.ok,
             apiStatus: apiRes.status,
             apiResponse: apiData,
-            payloadMB: (bodySize / 1024 / 1024).toFixed(2),
-            totalItems: zoning.reduce((s, z) => s + z.items.length, 0),
+            sentBody: requestBody,
             modifiedAreas,
             unchangedAreas
         });
