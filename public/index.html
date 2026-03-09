@@ -125,7 +125,11 @@
                 <label>Controller Count</label>
                 <input type="number" id="maxChannel" value="2" min="1">
             </div>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0" title="เมื่อโหลดเสร็จจะบันทึกโซนทั้งหมดลง DB ทันทีโดยไม่ต้องแก้ไข">
+                <input type="checkbox" id="loadAndSaveToDB" checked> บันทึกลง DB ทันที
+            </label>
             <button class="btn btn-blue" onclick="loadFromAPI()">Load from API</button>
+            <button class="btn btn-outline" onclick="exportZonesData()" title="Export ข้อมูลโซนใน Editor เป็นไฟล์ JSON">Export JSON</button>
         </div>
     </div>
 
@@ -717,7 +721,81 @@ async function loadFromAPI() {
         }
         activeTab = 0; updateTotals(); renderAll();
         addLog('success', `Loaded from API: ${zones.length} zones, ${data.seatCount} seats`);
+        // บันทึกลง DB ทันที ถ้าเลือกไว้
+        if (document.getElementById('loadAndSaveToDB').checked && zones.length > 0) {
+            await saveAllZonesToDB();
+        }
     } catch(e) { addLog('error', 'API load failed: '+e.message); }
+}
+
+// บันทึกโซนทั้งหมดใน Editor ลง DB (ใช้หลังจาก Load from API)
+async function saveAllZonesToDB() {
+    const seatId = document.getElementById('seatId').value;
+    const userName = document.getElementById('userName').value;
+    if (!seatId) { addLog('error', 'กรุณาระบุ Seat ID'); return; }
+    addLog('info', `กำลังบันทึก ${zones.length} โซนลง DB...`);
+    let ok = 0, err = 0;
+    for (let zi = 0; zi < zones.length; zi++) {
+        const z = zones[zi];
+        if (!z.area) { err++; continue; }
+        let zoneData = {
+            area: z.area.toUpperCase(), assignAlignment: z.assignAlignment||'ltr', alignment: z.assignAlignment||'ltr', rowFormat: z.rowFormat||'tb_asc', colFormat: z.colFormat||'lr_asc', rowStart: z.rowStart||'A', colStart: z.colStart||'1', rowLetterMode: z.rowLetterMode||'a', nameIgnoreMode: 'reserve', ignoreMode: z.ignoreMode||'skip', isHorizontal: ['ltr','rtl','ltr_bt','rtl_bt'].includes(z.assignAlignment||'ltr'), row: z.row, column: z.column,
+            burnId: z.burnId, channelCount: z.channelCount, channels: z.channels, items: [...(z.items||[])],
+            seatCount: z.seatCount, model: z.model || null, tabOrder: zi
+        };
+        try {
+            const listRes = await fetch('/api/zones?seat_id='+seatId);
+            const existingZones = await listRes.json();
+            const existing = existingZones.find(x => x.area && x.area.toUpperCase() === z.area.toUpperCase());
+            if (existing && existing.zone_data && existing.zone_data.items && existing.zone_data.items.length > 0) {
+                const oldItems = existing.zone_data.items || [];
+                const newItems = z.items || [];
+                const byKey = {};
+                oldItems.forEach(it => { byKey[it.name || ('idx'+(it.idIndex??0))] = { ...it }; });
+                newItems.forEach(it => { byKey[it.name || ('idx'+(it.idIndex??0))] = { ...it }; });
+                zoneData.items = Object.values(byKey).sort((a,b) => (a.idIndex??0) - (b.idIndex??0));
+                zoneData.row = Math.max(existing.zone_data.row||0, z.row||0);
+                zoneData.column = Math.max(existing.zone_data.column||0, z.column||0);
+                zoneData.seatCount = zoneData.items.filter(i => !i.ignore).length;
+            }
+            const res = await fetch('/api/zones', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ seat_id: seatId, area: z.area.toUpperCase(), zone_data: zoneData, created_by: userName }) });
+            const data = await res.json();
+            if (res.ok) { ok++; } else { err++; addLog('error', `Zone ${z.area}: ${data.error}`); }
+        } catch(e) { err++; addLog('error', `Zone ${z.area}: ${e.message}`); }
+    }
+    if (ok > 0) { refreshDB(); addLog('success', `บันทึกลง DB แล้ว ${ok} โซน${err > 0 ? ' (ผิดพลาด ' + err + ')' : ''}`); }
+    if (err > 0 && ok === 0) addLog('error', 'บันทึกลง DB ไม่สำเร็จ');
+}
+
+// Export ข้อมูลโซนใน Editor เป็นไฟล์ JSON
+function exportZonesData() {
+    if (!zones.length) { addLog('info', 'ไม่มีข้อมูลโซนใน Editor กรุณา Load จาก API ก่อน'); return; }
+    const seatId = document.getElementById('seatId').value;
+    const name = document.getElementById('seatName').value;
+    const maxChannel = parseInt(document.getElementById('maxChannel').value) || 2;
+    const exportedAt = new Date().toISOString();
+    addLog('info', 'กำลัง Export (ข้อมูลใหญ่จะใช้เวลาสักครู่)...');
+    try {
+        // สร้าง JSON แบบ chunk เพื่อไม่ให้ stringify ทั้งก้อนใหญ่เกินไป (ป้องกันโหลดไม่ครบ)
+        const meta = JSON.stringify({ seatId, name, maxChannel, model: seatModel, exportedAt });
+        const head = meta.slice(0, -1) + ',"zones":[';
+        const parts = [head];
+        for (let i = 0; i < zones.length; i++) {
+            parts.push(JSON.stringify(zones[i]));
+            if (i < zones.length - 1) parts.push(',');
+        }
+        parts.push(']}');
+        const blob = new Blob(parts, { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `seat_${seatId}_zones_${new Date().toISOString().slice(0,10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        addLog('success', `Export JSON สำเร็จ: ${zones.length} โซน`);
+    } catch (e) {
+        addLog('error', 'Export ไม่สำเร็จ: ' + e.message);
+    }
 }
 
 // ============================================================
