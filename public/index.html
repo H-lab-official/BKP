@@ -129,6 +129,11 @@
                 <input type="checkbox" id="loadAndSaveToDB" checked> บันทึกลง DB ทันที
             </label>
             <button class="btn btn-blue" onclick="loadFromAPI()">Load from API</button>
+            <button class="btn btn-purple" onclick="importFromPixel()" title="Import zones จาก Pixel Registration API">Import from Pixel</button>
+            <div class="form-group">
+                <label>Pixel Tag</label>
+                <input type="text" id="pixelTag" value="BK Day 1" style="width:120px" placeholder="BK Day 1">
+            </div>
             <button class="btn btn-outline" onclick="exportZonesData()" title="Export ข้อมูลโซนใน Editor เป็นไฟล์ JSON">Export JSON</button>
         </div>
     </div>
@@ -790,6 +795,127 @@ function loadZoneToEditor(dbZone) {
 // ============================================================
 // Load from API (proxy)
 // ============================================================
+// ============================================================
+// Import from Pixel Registration API
+// ============================================================
+async function importFromPixel() {
+    const tag = document.getElementById('pixelTag').value.trim();
+    if (!tag) { alert('Enter Pixel Tag (e.g. BK Day 1)'); return; }
+    addLog('info', `Importing from Pixel API: ${tag}...`);
+    try {
+        const res = await fetch('/api/proxy/pixel?tag=' + encodeURIComponent(tag));
+        const data = await res.json();
+        const areas = Array.isArray(data) ? data : (data.data || []);
+        if (!areas.length) { addLog('error', `No data for tag: ${tag}`); return; }
+
+        zones = [];
+        areas.forEach((areaData, order) => {
+            const items = areaData.seatPixelItem || [];
+            if (!items.length) return;
+
+            // Determine grid size from row letters and column numbers
+            const rowSet = new Set();
+            let maxCol = 0;
+            items.forEach(it => {
+                if (it.row) rowSet.add(it.row.toUpperCase());
+                const col = parseInt(it.column) || 0;
+                if (col > maxCol) maxCol = col;
+            });
+            const rowLetters = [...rowSet].sort();
+            const rowCount = rowLetters.length;
+            const colCount = maxCol;
+            if (rowCount === 0 || colCount === 0) return;
+
+            // Build row letter → row index map
+            const rowMap = {};
+            rowLetters.forEach((letter, idx) => { rowMap[letter] = idx; });
+
+            // Create items grid (fill all positions)
+            const area = (areaData.area || 'ZONE').toUpperCase();
+            const gridItems = [];
+            for (let r = 0; r < rowCount; r++) {
+                for (let c = 0; c < colCount; c++) {
+                    const rowLetter = rowLetters[r];
+                    gridItems.push({
+                        name: area + ',' + rowLetter + ',' + (c + 1),
+                        pixelId: 0,
+                        channel: 0,
+                        ignore: true, // default ignore, will enable from pixel data
+                        idIndex: r * colCount + c
+                    });
+                }
+            }
+
+            // Map pixel data onto the grid
+            const channels = new Map(); // channel name → {min, max}
+            items.forEach(it => {
+                const r = rowMap[(it.row || '').toUpperCase()];
+                const c = (parseInt(it.column) || 1) - 1;
+                if (r === undefined || c < 0 || c >= colCount) return;
+                const idx = r * colCount + c;
+                if (idx < gridItems.length) {
+                    gridItems[idx].ignore = false;
+                    gridItems[idx].channel = parseInt(it.pixelChannel) || 0;
+                    gridItems[idx].pixelId = parseInt(it.pixelId) || 0;
+
+                    // Track channel ranges
+                    const chName = parseInt(it.pixelChannel) || 0;
+                    if (chName > 0) {
+                        const pid = parseInt(it.pixelId) || 0;
+                        if (!channels.has(chName)) {
+                            channels.set(chName, { name: chName, min: pid, max: pid });
+                        } else {
+                            const ch = channels.get(chName);
+                            if (pid < ch.min) ch.min = pid;
+                            if (pid > ch.max) ch.max = pid;
+                        }
+                    }
+                }
+            });
+
+            // Sort channels by name
+            const channelList = [...channels.values()].sort((a, b) => a.name - b.name);
+
+            const zone = {
+                area: area,
+                row: rowCount,
+                column: colCount,
+                items: gridItems,
+                seatCount: gridItems.filter(i => !i.ignore).length,
+                channels: channelList,
+                channelCount: channelList.length,
+                burnId: parseInt(areaData.burnId) || 0,
+                assignAlignment: 'ltr',
+                alignment: 'ltr',
+                isHorizontal: true,
+                rowFormat: 'tb_asc',
+                colFormat: 'lr_asc',
+                rowStart: rowLetters[0] || 'A',
+                colStart: '1',
+                rowLetterMode: 'a',
+                nameIgnoreMode: 'reserve',
+                ignoreMode: 'reserve',
+                showId: false,
+                tabOrder: order,
+                model: null,
+                seatId: parseInt(document.getElementById('seatId').value) || 0
+            };
+            zones.push(zone);
+        });
+
+        activeTab = 0;
+        updateTotals();
+        renderAll();
+        const totalSeats = zones.reduce((s, z) => s + z.seatCount, 0);
+        addLog('success', `Imported from Pixel: ${zones.length} zones, ${totalSeats} seats from tag "${tag}"`);
+
+        // Auto save to DB if checked
+        if (document.getElementById('loadAndSaveToDB').checked && zones.length > 0) {
+            await saveAllZonesToDB();
+        }
+    } catch (e) { addLog('error', 'Import from Pixel failed: ' + e.message); }
+}
+
 async function loadFromAPI() {
     const id = document.getElementById('seatId').value;
     if (!id) { alert('Enter Seat ID'); return; }
