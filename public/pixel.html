@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixel Registration Viewer</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'Segoe UI',Tahoma,sans-serif;background:#1a1a2e;color:#e0e0e0;min-height:100vh;padding:20px}
+        h1{text-align:center;color:#FFD700;margin-bottom:24px;font-size:1.8rem;text-shadow:0 0 20px rgba(255,215,0,.3)}
+        a.back{color:#60a5fa;text-decoration:none;font-size:.85rem;display:inline-block;margin-bottom:16px}
+        a.back:hover{text-decoration:underline}
+        .card{background:#16213e;border-radius:12px;padding:20px;margin-bottom:16px;border:1px solid #1a1a4e;box-shadow:0 4px 15px rgba(0,0,0,.3)}
+        .card-title{color:#FFD700;font-size:1.1rem;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+        .form-row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+        .form-group{display:flex;flex-direction:column;gap:4px}
+        .form-group label{font-size:.75rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px}
+        input,select{background:#0f3460;border:1px solid #1a1a4e;color:#e0e0e0;padding:8px 12px;border-radius:6px;font-size:.9rem;outline:none;transition:border-color .2s}
+        input:focus,select:focus{border-color:#FFD700;box-shadow:0 0 0 2px rgba(255,215,0,.15)}
+        .btn{padding:8px 16px;border:none;border-radius:6px;cursor:pointer;font-size:.85rem;font-weight:600;transition:all .2s;display:inline-flex;align-items:center;gap:6px}
+        .btn-gold{background:#FFD700;color:#1a1a2e}.btn-gold:hover{background:#ffed4a;transform:translateY(-1px)}
+        .btn-blue{background:#3b82f6;color:#fff}.btn-blue:hover{background:#60a5fa}
+        .btn-sm{padding:4px 10px;font-size:.78rem}
+        .badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:.82rem;font-weight:600}
+        .badge-gold{background:rgba(255,215,0,.15);color:#FFD700}
+        .badge-green{background:rgba(16,185,129,.15);color:#34d399}
+        .badge-red{background:rgba(239,68,68,.15);color:#f87171}
+        .badge-blue{background:rgba(59,130,246,.15);color:#60a5fa}
+        .badge-gray{background:rgba(107,114,128,.15);color:#9ca3af}
+        .summary-bar{display:flex;gap:20px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+        .stat-item{text-align:center}
+        .stat-value{font-size:1.5rem;font-weight:700;color:#FFD700}
+        .stat-label{font-size:.7rem;color:#6b7280;text-transform:uppercase}
+        .tabs{display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap}
+        .tab{padding:8px 18px;background:#0f3460;border:1px solid #1a1a4e;border-radius:8px 8px 0 0;cursor:pointer;color:#9ca3af;font-weight:500;transition:all .2s}
+        .tab.active{background:#16213e;color:#FFD700;border-bottom-color:#16213e;border-top:2px solid #FFD700}
+        .tab:hover:not(.active){color:#e0e0e0;background:#1a2744}
+        .area-panel{display:none}.area-panel.active{display:block}
+        table{width:100%;border-collapse:collapse}
+        th,td{padding:8px 12px;border:1px solid #1a1a4e;text-align:left;font-size:.83rem}
+        th{background:#0f3460;color:#FFD700;font-weight:500;position:sticky;top:0;z-index:1}
+        tr:hover{background:rgba(255,215,0,.03)}
+        .table-wrap{max-height:60vh;overflow:auto;border-radius:8px;border:1px solid #1a1a4e}
+        .mac{font-family:'Consolas',monospace;font-size:.8rem;color:#a5f3fc}
+        .burn-yes{color:#34d399}.burn-no{color:#f87171}
+        .loading{text-align:center;padding:40px;color:#9ca3af;font-style:italic}
+        .filter-row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+        .filter-row input{width:200px}
+        .filter-row select{width:auto}
+        .chip{display:inline-block;padding:2px 8px;border-radius:12px;font-size:.75rem;font-weight:600;margin:0 2px}
+        .chip-burn{background:rgba(16,185,129,.2);color:#34d399;border:1px solid rgba(16,185,129,.3)}
+        .chip-noburn{background:rgba(239,68,68,.2);color:#f87171;border:1px solid rgba(239,68,68,.3)}
+    </style>
+</head>
+<body>
+    <a href="/" class="back">&larr; Back to Seat Collab</a>
+    <h1>Pixel Registration Viewer</h1>
+
+    <div class="card">
+        <div class="card-title">Config</div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Concert Tag</label>
+                <input type="text" id="tagInput" value="BK Day 1" style="width:200px" placeholder="BK Day 1">
+            </div>
+            <div class="form-group">
+                <label>Quick Select</label>
+                <select id="tagSelect" onchange="document.getElementById('tagInput').value=this.value">
+                    <option value="BK Day 1">BK Day 1</option>
+                    <option value="BK Day 2">BK Day 2</option>
+                    <option value="BK Day 3">BK Day 3</option>
+                    <option value="BK Day 4">BK Day 4</option>
+                </select>
+            </div>
+            <button class="btn btn-gold" onclick="loadPixelData()">Load Data</button>
+        </div>
+    </div>
+
+    <div id="summaryCard" class="card" style="display:none">
+        <div class="card-title">Summary - <span id="summaryTag"></span></div>
+        <div class="summary-bar" id="summaryBar"></div>
+    </div>
+
+    <div id="dataCard" class="card" style="display:none">
+        <div class="card-title">Registration Data</div>
+        <div class="filter-row">
+            <input type="text" id="searchInput" placeholder="Search name, MAC, row, col..." oninput="renderActiveTab()">
+            <select id="filterBurn" onchange="renderActiveTab()">
+                <option value="all">All</option>
+                <option value="burn">Burned Only</option>
+                <option value="noburn">Not Burned</option>
+            </select>
+            <span id="filterCount" style="color:#9ca3af;font-size:.82rem"></span>
+        </div>
+        <div class="tabs" id="areaTabs"></div>
+        <div id="areaPanels"></div>
+    </div>
+
+<script>
+let pixelData = [];
+let activeArea = 0;
+
+async function loadPixelData() {
+    const tag = document.getElementById('tagInput').value.trim();
+    if (!tag) { alert('Please enter a concert tag'); return; }
+
+    document.getElementById('summaryCard').style.display = 'none';
+    document.getElementById('dataCard').style.display = 'none';
+
+    try {
+        const res = await fetch('/api/proxy/pixel?tag=' + encodeURIComponent(tag));
+        const data = await res.json();
+        pixelData = Array.isArray(data) ? data : (data.data || []);
+
+        if (!pixelData.length) {
+            alert('No data found for tag: ' + tag);
+            return;
+        }
+
+        document.getElementById('summaryTag').textContent = tag;
+        renderSummary();
+        renderTabs();
+        renderActiveTab();
+
+        document.getElementById('summaryCard').style.display = '';
+        document.getElementById('dataCard').style.display = '';
+    } catch (e) {
+        alert('Load failed: ' + e.message);
+    }
+}
+
+function renderSummary() {
+    let totalItems = 0, totalBurned = 0, totalNotBurned = 0;
+    const areaSummary = [];
+
+    pixelData.forEach(area => {
+        const items = area.seatPixelItem || [];
+        const burned = items.filter(i => i.isBurn).length;
+        const notBurned = items.length - burned;
+        totalItems += items.length;
+        totalBurned += burned;
+        totalNotBurned += notBurned;
+        areaSummary.push({ area: area.area, total: items.length, burned, notBurned });
+    });
+
+    let h = `
+        <div class="stat-item"><div class="stat-value">${pixelData.length}</div><div class="stat-label">Areas</div></div>
+        <div class="stat-item"><div class="stat-value">${totalItems}</div><div class="stat-label">Total Seats</div></div>
+        <div class="stat-item"><div class="stat-value" style="color:#34d399">${totalBurned}</div><div class="stat-label">Burned</div></div>
+        <div class="stat-item"><div class="stat-value" style="color:#f87171">${totalNotBurned}</div><div class="stat-label">Not Burned</div></div>
+        <div class="stat-item"><div class="stat-value" style="color:#60a5fa">${totalItems > 0 ? Math.round(totalBurned/totalItems*100) : 0}%</div><div class="stat-label">Burn Rate</div></div>
+    `;
+    document.getElementById('summaryBar').innerHTML = h;
+}
+
+function renderTabs() {
+    let h = '';
+    pixelData.forEach((area, i) => {
+        const items = area.seatPixelItem || [];
+        const burned = items.filter(x => x.isBurn).length;
+        h += `<div class="tab ${i === activeArea ? 'active' : ''}" onclick="activeArea=${i};renderTabs();renderActiveTab()">
+            ${area.area} <span class="badge badge-gold" style="font-size:.7rem;padding:2px 6px;margin-left:4px">${items.length}</span>
+            <span class="chip ${burned === items.length ? 'chip-burn' : 'chip-noburn'}" style="margin-left:2px">${burned}/${items.length}</span>
+        </div>`;
+    });
+    document.getElementById('areaTabs').innerHTML = h;
+}
+
+function renderActiveTab() {
+    const area = pixelData[activeArea];
+    if (!area) { document.getElementById('areaPanels').innerHTML = ''; return; }
+
+    let items = area.seatPixelItem || [];
+    const search = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+    const filterBurn = document.getElementById('filterBurn').value;
+
+    // Filter
+    let filtered = items;
+    if (filterBurn === 'burn') filtered = filtered.filter(i => i.isBurn);
+    else if (filterBurn === 'noburn') filtered = filtered.filter(i => !i.isBurn);
+    if (search) {
+        filtered = filtered.filter(i =>
+            (i.region || '').toLowerCase().includes(search) ||
+            (i.row || '').toLowerCase().includes(search) ||
+            (i.column + '').includes(search) ||
+            (i.mac || '').toLowerCase().includes(search) ||
+            (i.pixelChannel + '').includes(search) ||
+            (i.pixelId + '').includes(search)
+        );
+    }
+
+    // Sort by row then column
+    filtered.sort((a, b) => {
+        if (a.row !== b.row) return (a.row || '').localeCompare(b.row || '');
+        return (parseInt(a.column) || 0) - (parseInt(b.column) || 0);
+    });
+
+    document.getElementById('filterCount').textContent = `Showing ${filtered.length} of ${items.length}`;
+
+    let h = `<div class="table-wrap"><table>
+        <thead><tr>
+            <th>#</th><th>Region</th><th>Row</th><th>Col</th>
+            <th>Channel</th><th>PixelId</th><th>Burned</th><th>MAC Address</th>
+        </tr></thead><tbody>`;
+
+    filtered.forEach((item, idx) => {
+        h += `<tr>
+            <td>${idx + 1}</td>
+            <td>${item.region || '-'}</td>
+            <td>${item.row || '-'}</td>
+            <td>${item.column ?? '-'}</td>
+            <td>${item.pixelChannel ?? '-'}</td>
+            <td>${item.pixelId ?? '-'}</td>
+            <td>${item.isBurn ? '<span class="burn-yes">Yes</span>' : '<span class="burn-no">No</span>'}</td>
+            <td class="mac">${item.mac || '-'}</td>
+        </tr>`;
+    });
+
+    h += '</tbody></table></div>';
+    document.getElementById('areaPanels').innerHTML = h;
+}
+
+// Auto-load on page load if tag in URL
+(function() {
+    const params = new URLSearchParams(window.location.search);
+    const tag = params.get('tag');
+    if (tag) {
+        document.getElementById('tagInput').value = tag;
+        loadPixelData();
+    }
+})();
+</script>
+</body>
+</html>

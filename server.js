@@ -253,6 +253,23 @@ app.get('/api/proxy/seat', async (req, res) => {
     }
 });
 
+// GET /api/proxy/pixel?tag=BK+Day+1 - Proxy to getPixel API
+app.get('/api/proxy/pixel', async (req, res) => {
+    try {
+        const tag = req.query.tag;
+        if (!tag) return res.status(400).json({ error: 'tag required' });
+
+        const apiRes = await fetch(API_BASE + '/concert/getPixel?tag=' + encodeURIComponent(tag), {
+            headers: { 'languagecode': 'en' }
+        });
+        const data = await apiRes.json();
+        res.json(data);
+    } catch (err) {
+        console.error('[GET /api/proxy/pixel]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ============================================================
 // Start Server
 // ============================================================
