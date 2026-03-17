@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -c server.js)",
+      "Bash(node -c public/index.html)"
+    ]
+  }
+}

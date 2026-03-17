@@ -76,19 +76,64 @@ async function getAllZones() {
 }
 
 // Copy all zones from source_seat_id to target_seat_id (push Seat A → Seat B)
-async function copyZonesToSeat(sourceSeatId, targetSeatId, createdBy) {
-    const zones = await getZones(sourceSeatId);
-    const created = [];
-    for (const row of zones) {
+// NOTE: เพื่อป้องกันข้อมูลหาย โซนที่ Seat B มี area ซ้ำอยู่แล้วจะถูก "ข้าม" (skip) ไม่ overwrite
+async function copyZonesToSeat(sourceSeatId, targetSeatId, createdBy, overwrite = false) {
+    const sourceZones = await getZones(sourceSeatId);
+    // ดึงเฉพาะ area ที่มีอยู่แล้วใน target เพื่อตัดสินใจ skip/overwrite
+    const existingRes = await pool.query(
+        'SELECT DISTINCT area FROM seat_zones WHERE seat_id = $1',
+        [targetSeatId]
+    );
+    const existingAreas = new Set(
+        existingRes.rows.map(r => (r.area || '').toUpperCase())
+    );
+
+    let copied = 0;
+    let skipped = 0;
+    let overwritten = 0;
+    const zones = [];
+
+    for (const row of sourceZones) {
+        const areaUpper = (row.area || '').toUpperCase();
+        if (!areaUpper) {
+            skipped++;
+            continue;
+        }
+        if (existingAreas.has(areaUpper)) {
+            if (!overwrite) {
+                skipped++;
+                continue;
+            }
+            // overwrite: saveZone does upsert
+            overwritten++;
+        }
+        // Strip model IDs so API creates new records for the target seat
+        const cleanData = JSON.parse(JSON.stringify(row.zone_data));
+        delete cleanData.model;
+        cleanData.seatId = parseInt(targetSeatId) || 0;
+        if (Array.isArray(cleanData.items)) {
+            cleanData.items = cleanData.items.map(item => {
+                const { model, zoningId, ...rest } = item;
+                return { ...rest, zoningId: 0 };
+            });
+        }
         const zone = await saveZone(
             targetSeatId,
-            row.area,
-            row.zone_data,
+            areaUpper,
+            cleanData,
             createdBy || row.created_by || ''
         );
-        created.push(zone);
+        zones.push(zone);
+        copied++;
     }
-    return { count: created.length, zones: created };
+
+    return {
+        totalSource: sourceZones.length,
+        copied,
+        skipped,
+        overwritten,
+        zones,
+    };
 }
 
 // Save or update a zone (upsert by seat_id + area)

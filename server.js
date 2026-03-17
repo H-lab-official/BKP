@@ -69,15 +69,25 @@ app.delete('/api/zones/:id', async (req, res) => {
 // POST /api/zones/copy - Push zones from Seat A to Seat B
 app.post('/api/zones/copy', async (req, res) => {
     try {
-        const { source_seat_id, target_seat_id, created_by } = req.body;
+        const { source_seat_id, target_seat_id, created_by, overwrite } = req.body;
         if (!source_seat_id || !target_seat_id) {
             return res.status(400).json({ error: 'source_seat_id and target_seat_id required' });
         }
         if (source_seat_id === target_seat_id) {
             return res.status(400).json({ error: 'Source and target Seat ID must be different' });
         }
-        const result = await db.copyZonesToSeat(source_seat_id, target_seat_id, created_by || '');
-        res.json({ success: true, count: result.count, message: `Copied ${result.count} zone(s) to Seat ID ${target_seat_id}` });
+        const result = await db.copyZonesToSeat(source_seat_id, target_seat_id, created_by || '', !!overwrite);
+        const msg = overwrite
+            ? `Copied ${result.copied} zone(s) to Seat ID ${target_seat_id} (overwritten ${result.overwritten}, skipped ${result.skipped})`
+            : `Copied ${result.copied} zone(s) to Seat ID ${target_seat_id} (skipped ${result.skipped} existing area(s))`;
+        res.json({
+            success: true,
+            totalSource: result.totalSource,
+            copied: result.copied,
+            skipped: result.skipped,
+            overwritten: result.overwritten,
+            message: msg
+        });
     } catch (err) {
         console.error('[POST /api/zones/copy]', err.message);
         res.status(500).json({ error: err.message });
@@ -112,33 +122,61 @@ app.post('/api/publish', async (req, res) => {
 
         // Build zoning array from ALL zones (sorted by tab order)
         // IMPORTANT: items must be sorted by idIndex for correct position mapping (set 1, set 2)
+        const seatIdInt = parseInt(seat_id);
         const zoning = allZones.map((row, idx) => {
             const zd = row.zone_data;
-            const zoneId = (zd.model && zd.model.ID) ? zd.model.ID : 0;
+            // Check if zone_data belongs to this seat - if not, strip model IDs
+            const isOwnData = !zd.seatId || parseInt(zd.seatId) === seatIdInt;
+            const zoneModel = (isOwnData && zd.model) ? zd.model : null;
+            const zoneId = (zoneModel && zoneModel.ID) ? zoneModel.ID : 0;
             const rawItems = zd.items || [];
             // Deduplicate by idIndex (keep first), then sort by idIndex for correct position
             const items = rawItems
                 .filter((item, i, arr) => arr.findIndex(x => (x.idIndex ?? 0) === (item.idIndex ?? 0)) === i)
                 .sort((a, b) => (a.idIndex ?? 0) - (b.idIndex ?? 0))
-                .map(item => ({
-                    ...(item.model ? { model: item.model } : {}),
-                    zoningId: item.zoningId || zoneId,
-                    channel: parseInt(item.channel) || 0,
-                    name: item.name || '',
-                    pixelId: parseInt(item.pixelId) || 0,
-                    ignore: !!item.ignore,
-                    idIndex: item.idIndex ?? 0
+                .map(item => {
+                    const isIgnored = !!item.ignore;
+                    const itemModel = (isOwnData && item.model) ? item.model : null;
+                    return {
+                        ...(itemModel ? { model: itemModel } : {}),
+                        zoningId: isOwnData ? (item.zoningId || zoneId) : 0,
+                        channel: isIgnored ? 0 : (parseInt(item.channel) || 0),
+                        name: item.name || '',
+                        pixelId: isIgnored ? 0 : (parseInt(item.pixelId) || 0),
+                        ignore: isIgnored,
+                        idIndex: item.idIndex ?? 0
+                    };
+                });
+
+            // Build channelsString - ensure correct format: [{"max":N,"min":N,"name":N}]
+            let channelsString = '[]';
+            if (zd.channelsString && typeof zd.channelsString === 'string') {
+                channelsString = zd.channelsString;
+            } else if (Array.isArray(zd.channels) && zd.channels.length > 0) {
+                const channels = zd.channels.map(ch => ({
+                    max: parseInt(ch.max) || 0,
+                    min: parseInt(ch.min) || 1,
+                    name: parseInt(ch.name) || 0
                 }));
+                channelsString = JSON.stringify(channels);
+            }
+
             return {
-                ...(zd.model ? { model: zd.model } : {}),
+                ...(zoneModel ? { model: zoneModel } : {}),
                 area: row.area.toUpperCase(),
                 isHorizontal: zd.isHorizontal !== false,
                 row: parseInt(zd.row) || 0,
                 column: parseInt(zd.column) || 0,
                 burnId: parseInt(zd.burnId) || 0,
+                seatId: seatIdInt,
                 order: idx,
+                columnType: parseInt(zd.columnType) || 0,
+                rowType: parseInt(zd.rowType) || 0,
+                rowFixedValue: zd.rowFixedValue || '',
+                columnFixedValue: zd.columnFixedValue || '',
+                channelsString: channelsString,
+                seatCount: parseInt(zd.seatCount) || 0,
                 channelCount: parseInt(zd.channelCount) || 0,
-                channelsString: JSON.stringify(zd.channels || []),
                 items
             };
         });
@@ -150,7 +188,7 @@ app.post('/api/publish', async (req, res) => {
         });
 
         const requestBody = {
-            ID: seat_id,
+            ID: seatIdInt,
             seatCount: totalSeats,
             idCount: 0,
             zoning: zoning,
@@ -158,6 +196,7 @@ app.post('/api/publish', async (req, res) => {
             image: '',
             name: name || '',
             model: model || null,
+            pixel: 0,
             brunItems: JSON.stringify([{ value: 1, title: 'A1' }]),
             maxChannel: parseInt(maxChannel) || 2
         };

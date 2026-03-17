@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "seat-collab-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--watch", "server.js"],
+      "port": 5173
+    },
+    {
+      "name": "seat-collab",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server.js"],
+      "port": 5173
+    }
+  ]
+}

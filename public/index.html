@@ -155,6 +155,13 @@
         <div class="card-title">Push โซน (คัดลอกจาก Seat A ไป Seat B)</div>
         <div class="form-row">
             <div class="form-group">
+                <label>แหล่งข้อมูล A</label>
+                <select id="pushSourceMode" style="width:120px">
+                    <option value="db">จาก DB</option>
+                    <option value="api">จาก API</option>
+                </select>
+            </div>
+            <div class="form-group">
                 <label>จาก Seat ID (A)</label>
                 <input type="text" id="pushSourceSeatId" placeholder="6" style="width:80px">
             </div>
@@ -162,6 +169,9 @@
                 <label>ไปยัง Seat ID (B)</label>
                 <input type="text" id="pushTargetSeatId" placeholder="7" style="width:80px">
             </div>
+            <label style="font-size:.82rem;color:#9ca3af;display:flex;align-items:center;gap:4px;cursor:pointer">
+                <input type="checkbox" id="pushOverwrite"> เขียนทับโซนที่ซ้ำ
+            </label>
             <button class="btn btn-gold" onclick="pushZonesToSeat()">Push โซนจาก A → B</button>
         </div>
     </div>
@@ -351,6 +361,9 @@ function assignChannels(zi, silent) {
         item.channel=parseInt(z.channels[ci].name); item.pixelId=z.channels[ci].min+count-off; return true;
     };
     const align = z.assignAlignment || 'ltr';
+    // Build idIndex → item map for correct position mapping
+    const itemByIdIndex = {};
+    z.items.forEach((it, arrIdx) => { itemByIdIndex[it.idIndex ?? arrIdx] = it; });
     let order = [];
     if (align === 'ltr') { for (let r=0;r<z.row;r++) for (let c=0;c<z.column;c++) order.push(r*z.column+c); }
     else if (align === 'rtl') { for (let r=0;r<z.row;r++) for (let c=z.column-1;c>=0;c--) order.push(r*z.column+c); }
@@ -361,7 +374,7 @@ function assignChannels(zi, silent) {
     else if (align === 'btt') { for (let c=0;c<z.column;c++) for (let r=z.row-1;r>=0;r--) order.push(r*z.column+c); }
     else if (align === 'btt_rl') { for (let c=z.column-1;c>=0;c--) for (let r=z.row-1;r>=0;r--) order.push(r*z.column+c); }
     else { for (let r=0;r<z.row;r++) for (let c=0;c<z.column;c++) order.push(r*z.column+c); }
-    for (const idx of order) { if (!assign(z.items[idx])) return; }
+    for (const pos of order) { const it = itemByIdIndex[pos]; if (it && !assign(it)) return; }
     renderAll(); addLog('info', `Zone ${z.area}: Assigned channels for ${count} seats`);
 }
 
@@ -381,13 +394,17 @@ function recalcNames(zi) {
     if (letterMode === 'aa' && (z.rowStart || '').toUpperCase() === 'AA') rowOff = 1;
     const colOff = parseInt(z.colStart) || 1;
 
+    // Build idIndex → item map for correct position mapping
+    const itemByIdIndex = {};
+    z.items.forEach((it, arrIdx) => { itemByIdIndex[it.idIndex ?? arrIdx] = it; });
+
     if (colDir === 'tb_asc' || colDir === 'tb_desc') {
         for (let c = 0; c < z.column; c++) {
             const rowOrder = colDir === 'tb_asc' ? [...Array(z.row).keys()] : [...Array(z.row).keys()].reverse();
             let seq = 0;
             for (const r of rowOrder) {
-                const idx = r * z.column + c;
-                const it = z.items[idx];
+                const pos = r * z.column + c;
+                const it = itemByIdIndex[pos];
                 if (!it) continue;
                 const rl = getRowLetter(r, c, z.row, z.column, rowDir, rowOff, letterMode);
                 if (it.ignore) {
@@ -403,8 +420,8 @@ function recalcNames(zi) {
             const colOrder = colDir === 'lr_asc' ? [...Array(z.column).keys()] : [...Array(z.column).keys()].reverse();
             let seq = 0;
             for (const c of colOrder) {
-                const idx = r * z.column + c;
-                const it = z.items[idx];
+                const pos = r * z.column + c;
+                const it = itemByIdIndex[pos];
                 if (!it) continue;
                 const rl = getRowLetter(r, c, z.row, z.column, rowDir, rowOff, letterMode);
                 if (it.ignore) {
@@ -562,7 +579,10 @@ async function saveZoneToDB(zi) {
     let zoneData = {
         area: z.area.toUpperCase(), assignAlignment: z.assignAlignment||'ltr', alignment: z.assignAlignment||'ltr', rowFormat: z.rowFormat||'tb_asc', colFormat: z.colFormat||'lr_asc', rowStart: z.rowStart||'A', colStart: z.colStart||'1', rowLetterMode: z.rowLetterMode||'a', nameIgnoreMode: 'reserve', ignoreMode: z.ignoreMode||'skip', isHorizontal: ['ltr','rtl','ltr_bt','rtl_bt'].includes(z.assignAlignment||'ltr'), row: z.row, column: z.column,
         burnId: z.burnId, channelCount: z.channelCount, channels: z.channels, items: [...(z.items||[])],
-        seatCount: z.seatCount, model: z.model || null, tabOrder: zi
+        seatCount: z.seatCount, model: z.model || null, tabOrder: zi,
+        seatId: parseInt(seatId) || 0, columnType: z.columnType || 0, rowType: z.rowType || 0,
+        rowFixedValue: z.rowFixedValue || '', columnFixedValue: z.columnFixedValue || '',
+        channelsString: z._origChannelsString || (z.channels ? JSON.stringify(z.channels.map(ch => ({max: parseInt(ch.max)||0, min: parseInt(ch.min)||1, name: parseInt(ch.name)||0}))) : '[]')
     };
 
     try {
@@ -614,29 +634,108 @@ async function refreshDB() {
 }
 
 async function pushZonesToSeat() {
+    const mode = document.getElementById('pushSourceMode').value;
     const source = (document.getElementById('pushSourceSeatId').value || '').trim();
     const target = (document.getElementById('pushTargetSeatId').value || '').trim();
     if (!source || !target) { addLog('error', 'กรุณาระบุ จาก Seat ID (A) และ ไปยัง Seat ID (B)'); return; }
     if (source === target) { addLog('error', 'Seat A และ Seat B ต้องไม่เหมือนกัน'); return; }
-    if (!confirm(`Push โซนทั้งหมดจาก Seat ID ${source} ไปยัง Seat ID ${target}?\n(โซนที่ B ที่ชื่อซ้ำจะถูก overwrite)`)) return;
-    try {
-        const res = await fetch('/api/zones/copy', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                source_seat_id: source,
-                target_seat_id: target,
-                created_by: document.getElementById('userName').value || ''
-            })
-        });
-        const data = await res.json();
-        if (data.success) {
-            addLog('success', data.message || `Push สำเร็จ: ${data.count} โซน`);
+    const overwrite = document.getElementById('pushOverwrite').checked;
+    const modeLabel = mode === 'api' ? 'API ภายนอก' : 'DB ของเรา';
+    const overwriteLabel = overwrite ? '(จะเขียนทับโซนที่ซ้ำ)' : '(โซนที่ซ้ำจะถูกข้ามไว้)';
+    if (!confirm(`Push โซนจาก Seat ID ${source} (${modeLabel}) ไปยัง Seat ID ${target} (DB)?\n${overwriteLabel}`)) return;
+
+    if (mode === 'api') {
+        // โหมด API: ดึงจาก API → บันทึกลง DB ของ Seat A → Copy DB(A) → DB(B)
+        try {
+            // Step 1: ดึงจาก API แล้วบันทึกลง DB ของ Seat A
+            addLog('info', `[1/2] กำลังดึงข้อมูลจาก API สำหรับ Seat ${source} แล้วบันทึกลง DB...`);
+            const apiRes = await fetch('/api/proxy/seat?id=' + source);
+            const json = await apiRes.json();
+            const data = json.data || json;
+            if (!data.zoning || data.zoning.length === 0) { addLog('error', `Seat ${source} ไม่มี zone ใน API`); return; }
+
+            const userName = document.getElementById('userName').value || '';
+            data.zoning.sort((a,b) => (a.order||0) - (b.order||0));
+            let savedA = 0;
+
+            for (let i = 0; i < data.zoning.length; i++) {
+                const z = data.zoning[i];
+                const area = (z.area || '').toUpperCase();
+                if (!area) continue;
+
+                let channels = [];
+                if (typeof z.channelsString === 'string') {
+                    try { channels = JSON.parse(z.channelsString); } catch(e) { channels = []; }
+                } else {
+                    channels = Array.isArray(z.channels) ? z.channels : [];
+                }
+
+                const zoneData = {
+                    area: area,
+                    assignAlignment: z.alignment || (z.isHorizontal !== false ? 'ltr' : 'ttb'),
+                    alignment: z.alignment || (z.isHorizontal !== false ? 'ltr' : 'ttb'),
+                    rowFormat: z.rowFormat || 'tb_asc', colFormat: z.colFormat || 'lr_asc',
+                    rowStart: z.rowStart || 'A', colStart: z.colStart || '1',
+                    rowLetterMode: z.rowLetterMode || 'a', nameIgnoreMode: 'reserve',
+                    ignoreMode: z.ignoreMode || 'skip',
+                    isHorizontal: z.isHorizontal !== false,
+                    row: z.row, column: z.column,
+                    burnId: z.burnId, channelCount: channels.length,
+                    channels: channels, items: z.items || [],
+                    seatCount: (z.items || []).filter(it => !it.ignore).length,
+                    model: z.model || null, tabOrder: i,
+                    seatId: parseInt(source) || 0,
+                    columnType: z.columnType || 0, rowType: z.rowType || 0,
+                    rowFixedValue: z.rowFixedValue || '', columnFixedValue: z.columnFixedValue || '',
+                    channelsString: typeof z.channelsString === 'string' ? z.channelsString : JSON.stringify(channels.map(ch => ({max:parseInt(ch.max)||0, min:parseInt(ch.min)||1, name:parseInt(ch.name)||0})))
+                };
+
+                try {
+                    const saveRes = await fetch('/api/zones', {
+                        method: 'POST', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({ seat_id: source, area: area, zone_data: zoneData, created_by: userName })
+                    });
+                    if (saveRes.ok) savedA++;
+                } catch(e) { /* skip */ }
+            }
+            addLog('success', `[1/2] บันทึก Seat ${source} ลง DB แล้ว ${savedA} โซน`);
+
+            // Step 2: Copy จาก DB(A) → DB(B)
+            addLog('info', `[2/2] กำลัง Copy จาก DB Seat ${source} → Seat ${target}${overwrite?' (เขียนทับ)':''}...`);
+            const copyRes = await fetch('/api/zones/copy', {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({ source_seat_id: source, target_seat_id: target, created_by: userName, overwrite: overwrite })
+            });
+            const copyData = await copyRes.json();
+            if (copyData.success) {
+                addLog('success', `[2/2] Push สำเร็จ: copy ${copyData.copied||0} โซน (overwrite ${copyData.overwritten||0}, skip ${copyData.skipped||0})`);
+            } else {
+                addLog('error', copyData.error || JSON.stringify(copyData));
+            }
             refreshDB();
-        } else {
-            addLog('error', data.error || JSON.stringify(data));
-        }
-    } catch(e) { addLog('error', 'Push failed: '+e.message); }
+        } catch(e) { addLog('error', 'Push from API failed: '+e.message); }
+    } else {
+        // โหมด DB: copy จาก DB ของเราไป DB ของเรา (เดิม)
+        try {
+            const res = await fetch('/api/zones/copy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    source_seat_id: source,
+                    target_seat_id: target,
+                    created_by: document.getElementById('userName').value || '',
+                    overwrite: overwrite
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                addLog('success', data.message || `Push สำเร็จ: copy ${data.copied||0} โซน (overwrite ${data.overwritten||0}, skip ${data.skipped||0})`);
+                refreshDB();
+            } else {
+                addLog('error', data.error || JSON.stringify(data));
+            }
+        } catch(e) { addLog('error', 'Push failed: '+e.message); }
+    }
 }
 
 async function changeStatus(id, status) {
@@ -667,6 +766,13 @@ function loadZoneToEditor(dbZone) {
     if (!zd.rowLetterMode || !['a','aa'].includes(zd.rowLetterMode)) zd.rowLetterMode = 'a';
     zd.nameIgnoreMode = 'reserve';
     if (!zd.ignoreMode || !['skip','reserve'].includes(zd.ignoreMode)) zd.ignoreMode = 'skip';
+    // Preserve API fields
+    if (zd.seatId === undefined) zd.seatId = 0;
+    if (zd.columnType === undefined) zd.columnType = 0;
+    if (zd.rowType === undefined) zd.rowType = 0;
+    if (zd.rowFixedValue === undefined) zd.rowFixedValue = '';
+    if (zd.columnFixedValue === undefined) zd.columnFixedValue = '';
+    if (zd.channelsString && !zd._origChannelsString) zd._origChannelsString = zd.channelsString;
     // Check if already in editor
     const existing = zones.findIndex(z => z.area && z.area.toUpperCase() === dbZone.area.toUpperCase());
     if (existing >= 0) {
@@ -707,6 +813,14 @@ async function loadFromAPI() {
                 z.channelCount = z.channels ? z.channels.length : 0;
                 z.seatCount = z.items ? z.items.filter(i=>!i.ignore).length : 0;
                 z.showId = false;
+                // Preserve API fields for correct publish structure
+                if (z.seatId === undefined) z.seatId = parseInt(id) || 0;
+                if (z.columnType === undefined) z.columnType = 0;
+                if (z.rowType === undefined) z.rowType = 0;
+                if (z.rowFixedValue === undefined) z.rowFixedValue = '';
+                if (z.columnFixedValue === undefined) z.columnFixedValue = '';
+                // Keep original channelsString from API
+                if (typeof z.channelsString === 'string') z._origChannelsString = z.channelsString;
                 if (!z.assignAlignment) z.assignAlignment = z.alignment || (z.isHorizontal !== false ? 'ltr' : 'ttb');
                 if (!z.alignment) z.alignment = z.assignAlignment || 'ltr';
                 if (!z.rowFormat || !['tb_asc','tb_desc','lr_asc','lr_desc'].includes(z.rowFormat)) z.rowFormat = 'tb_asc';
@@ -741,7 +855,10 @@ async function saveAllZonesToDB() {
         let zoneData = {
             area: z.area.toUpperCase(), assignAlignment: z.assignAlignment||'ltr', alignment: z.assignAlignment||'ltr', rowFormat: z.rowFormat||'tb_asc', colFormat: z.colFormat||'lr_asc', rowStart: z.rowStart||'A', colStart: z.colStart||'1', rowLetterMode: z.rowLetterMode||'a', nameIgnoreMode: 'reserve', ignoreMode: z.ignoreMode||'skip', isHorizontal: ['ltr','rtl','ltr_bt','rtl_bt'].includes(z.assignAlignment||'ltr'), row: z.row, column: z.column,
             burnId: z.burnId, channelCount: z.channelCount, channels: z.channels, items: [...(z.items||[])],
-            seatCount: z.seatCount, model: z.model || null, tabOrder: zi
+            seatCount: z.seatCount, model: z.model || null, tabOrder: zi,
+            seatId: parseInt(seatId) || 0, columnType: z.columnType || 0, rowType: z.rowType || 0,
+            rowFixedValue: z.rowFixedValue || '', columnFixedValue: z.columnFixedValue || '',
+            channelsString: z._origChannelsString || (z.channels ? JSON.stringify(z.channels.map(ch => ({max: parseInt(ch.max)||0, min: parseInt(ch.min)||1, name: parseInt(ch.name)||0}))) : '[]')
         };
         try {
             const listRes = await fetch('/api/zones?seat_id='+seatId);
@@ -1038,15 +1155,25 @@ function renderZonePanels() {
             <span id="ie_info_${i}" style="color:#9ca3af;font-size:.78rem;margin-left:4px"></span>
         </div>`;
         if (z.items&&z.items.length>0&&z.row>0&&z.column>0) {
+            // Build idIndex → item map so grid positions stay correct even if items were removed
+            const itemByIdx = {};
+            z.items.forEach((it, arrIdx) => { itemByIdx[it.idIndex ?? arrIdx] = { item: it, arrIdx }; });
             h+=`<div class="seat-grid ${editMode?'edit-mode':''} ${seatGridStyle==='square'?'square':''}">`;
             for(let r=0;r<z.row;r++){h+=`<div class="seat-row">`;
-                for(let c=0;c<z.column;c++){const it=z.items[r*z.column+c];if(it){
-                    const cls=it.ignore?'ignored':'normal';
-                    const idx=r*z.column+c;
-                    const editing=(editState.zi===i&&editState.idx===idx)?'editing':'';
-                    const d=z.showId?it.channel+','+it.pixelId:it.name;
-                    h+=`<div class="seat-cell ${cls} ${editing}" onclick="handleSeatClick(${i},${idx},event)" title="${editMode?'คลิก: แก้ไข':'คลิก: toggle ignore'}">${d}</div>`;
-                }}h+=`</div>`;}
+                for(let c=0;c<z.column;c++){
+                    const pos=r*z.column+c;
+                    const entry=itemByIdx[pos];
+                    if(entry){
+                        const it=entry.item;
+                        const cls=it.ignore?'ignored':'normal';
+                        const editing=(editState.zi===i&&editState.idx===entry.arrIdx)?'editing':'';
+                        const d=z.showId?it.channel+','+it.pixelId:it.name;
+                        h+=`<div class="seat-cell ${cls} ${editing}" onclick="handleSeatClick(${i},${entry.arrIdx},event)" title="${editMode?'คลิก: แก้ไข':'คลิก: toggle ignore'}">${d}</div>`;
+                    } else {
+                        // Empty cell - item was removed, keep grid position
+                        h+=`<div class="seat-cell ignored" style="opacity:.3" title="ว่าง (ถูกลบ)">-</div>`;
+                    }
+                }h+=`</div>`;}
             h+=`</div>`;
         }
         const sc=z.items?z.items.filter(it=>!it.ignore).length:0;
